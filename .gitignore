@@ -1,0 +1,62 @@
+# --- 1. Dossiers de Build & Compilation ---
+# Le dossier standard où on lance cmake
+build/
+cmake-build-debug/
+cmake-build-release/
+
+# Dossiers générés si vous utilisiez l'ancien Makefile
+bin/
+obj/
+lib/
+
+# --- 2. Fichiers générés par CMake (si lancés à la racine) ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# --- 3. Fichiers Compilés & Objets ---
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+# Nom spécifique de votre exécutable (pour être sûr)
+MonApp
+
+# --- 4. Fichiers Système (OS) ---
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# --- 5. Éditeurs & IDE ---
+# VS Code
+.vscode/
+*.code-workspace
+
+# CLion / IntelliJ
+.idea/
+
+# Visual Studio
+.vs/
+*.user
+*.vcxproj
+*.sln
+
+# Fichiers temporaires (Vim, Nano...)
+*~
+*.swp
+
+# User config files
+CMakeUserPresets.json
+astuces_cmd.txt

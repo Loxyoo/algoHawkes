@@ -1,0 +1,132 @@
+#ifndef WORKER_H
+#define WORKER_H
+
+#include <json/value.h>
+#include <json/json.h>
+#include <fstream>
+#include <algorithm>
+
+#include <chrono>
+using namespace std::chrono_literals;
+using TimePoint = std::chrono::steady_clock::time_point;
+
+#include "tools.h"
+#include "struct.h"
+#include "calibration/hawkes_model/include/optimization.h"
+#include "calibration/hawkes_model/include/struct.h"
+
+class HawkesModel {
+    protected:
+        int worker_id; // Identifiant du worker
+        // Si n_websockets = 5, un modèle de Hawkes se basera sur 5 processus auto-excitante
+        int n_websockets; // Nombre de websockets actif
+        std::string asset; // Nom de l'asset géré par ce model
+        ThreadSafeQueue<normalized_data>& inqueue; // Queue Thread Safe qui permet de recevoir les données des marchés normalisé
+        int training_duration; // Durée de l'entrainement
+        Json::Value websocket_map; // Map qui associe le nom d'un exchange à un integer (id)
+        TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
+        bool parameters_optimized = false;
+        int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
+        
+    public:
+        int n_data; // Number of normalized data in buffer
+        std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets
+        // std::vector<double> base_intensity;
+        std::vector<TimePoint> last_time;
+        std::vector<double> alpha; // Paramètres de force pour chaques websockets
+        std::vector<double> beta; // Paramètres d'oublie pour chaques websockets
+        std::vector<double> mu; // Intensités de fonf pour chaques websockets
+        
+        std::vector<double> phi; // Variable pour l'ARCHITECTURE FPGA
+        
+        std::vector<Event> buffer; // Buffer qui enregistre les events, i.e. les timestamps de chaque nouvelle données du symbol gérès par ce model.
+
+        /**
+         * @param worker_id identifiant du worker
+         * @param n_websockets Nombre de webscokets actif
+         * @param asset Symbol que gère ce modèle
+         * @param inqueue Thread Safe Queue qui permet de récupérer les données normalisées
+         * @param training_duration Durée de l'entrainement
+         * @param websocket_map Dictionnaire associé à chaque nom de websockets, un identifiant (entier dans [0:n_websocket-1])
+         */
+        HawkesModel(
+            int worker_id,
+            int n_websockets,
+            std::string asset,
+            ThreadSafeQueue<normalized_data>& inqueue,
+            int training_duration,
+            Json::Value websocket_map,
+            TelemetryManager& telemetry_manager,
+            int symbol_id
+        );
+
+        /**
+         * @brief update the intensities in real time
+         * 
+         * Cette méthode met à jour en temp réel l'intensité de Hawkes. Elle optimise ces paramètres
+         * dynamiquement afin de garder une stabilité et une cohérence face aux régimes changeant des marchés.
+         * 
+         * @param data : Donnée recu qui a été normalisé
+         */
+        void update_model(normalized_data data);
+};
+
+class Worker {
+    protected:
+        ThreadSafeQueue<normalized_data>& inqueue; // Queue Thread Safe contenant les données standardisés
+        ThreadSafeQueue<History>& opt_input_queue; // Queue Cores Safe qui permet d'envoyer l'information au worker HPC
+        ThreadSafeQueue<opt_hawkesParams>& opt_output_queue; // Queue Cores Safe qui permet d'énvoyer les nouveaux paramètres optimisés
+        TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
+        WorkerParam* workerParam; 
+        int n_assets; // Nombre d'assets gérés par ce worker
+        Json::Value target_symbol_id; // Association d'un index à chaques assets géré [0, n_assets-1]
+        std::vector<HawkesModel> models; // Liste des modèles de Hawkes qui seront géré par ce worker
+    public: 
+        /**
+         * @param workerParam Structure de configuration pour l'initialisation du worker. Contient, les paramètres nécessaires.
+         * @param inqueue Thread Safe Queue pour les données normalisé des websockets
+         * @param opt_input_queue Thread Safe Queue qui permet d'envoyer des paquets History au worker optimiser. Queue de communication entre le worker des modèles, et le worker HPC.
+         * @param opt_output_queue Thread Safe Queue qui permet de recevoir des paquets opt_HawkesParam du worker optimiser. Queue de communication entre le worker des modèles, et le worker HPC.
+         */
+        Worker(
+            WorkerParam* workerParam,
+            ThreadSafeQueue<normalized_data>& inqueue,
+            ThreadSafeQueue<History>& opt_input_queue,
+            ThreadSafeQueue<opt_hawkesParams>& opt_output_queue,
+            TelemetryManager& telemetry_manager
+        );
+
+        /**
+         * Fonction principal de la class, envoie les paquets History au worker HPC pour l'optimisation des paramètres, recoit les nouveaux paramètres et les diffuses dans les modèles qu'il gère.
+         */
+        void run();
+};
+
+class HawkesOptimizer {
+    protected:
+        ThreadSafeQueue<History>& opt_input_queue; // Queue Cores Safe qui permet d'envoyer l'information au worker HPC
+        ThreadSafeQueue<opt_hawkesParams>& opt_output_queue; // Queue Cores Safe qui permet d'énvoyer les nouveaux paramètres optimisés
+        NelderMeadConfig optimizerConfig;
+        int n_websockets;
+
+    public:
+        /**
+         * @param opt_input_queue Thread Safe Queue qui permet d'envoyer des paquets History au worker optimiser. Queue de communication entre le worker des modèles, et le worker HPC.
+         * @param opt_output_queue Thread Safe Queue qui permet de recevoir des paquets opt_HawkesParam du worker optimiser. Queue de communication entre le worker des modèles, et le worker HPC.
+         * @param n_websockets Nombre de websockets actifs
+         */
+        HawkesOptimizer(
+            ThreadSafeQueue<History>& opt_input_queue,
+            ThreadSafeQueue<opt_hawkesParams>& opt_output_queue,
+            int n_websockets
+        );
+
+        /**
+         * Fonction principal de la class, exécuté depuis le thread. Cette méthode, ajoute les données recu dans le buffer, et calcul l'intensité de hawkes en temps réel grâce à un schéma de calcul FPGA.
+         */
+        void run();
+
+};
+
+
+#endif 
