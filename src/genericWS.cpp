@@ -112,6 +112,7 @@ void GenericWebSocket::connect(){
                                             
                                     // Push into the output queue
                                     this->datas_output.push(data);
+                                    // std::cout << "ts: " << std::fixed << std::setprecision(6) << data.timestamp << " src:" << data.exchange << std::endl;
                                 }
                             }
                         } catch (const std::exception& e) {
@@ -233,8 +234,9 @@ std::vector<normalized_data> BinanceWS::normalise_message(Json::Value message) {
         data.symbol = symbol;
         data.price = std::stod(message["p"].asString());
         data.quantity = std::stod(message["q"].asString());
-        data.timestamp = message["T"].asUInt64();
-        data.arrival_time = std::time(nullptr);
+        // data.timestamp = message["T"].asUInt64()/1000;
+        data.timestamp = now_unix();
+        data.arrival_time = now_unix();
         results.push_back(data);
     }
     return results; // Return empty data if message type does not match
@@ -307,10 +309,10 @@ std::vector<normalized_data> CoinbaseWS::normalise_message(Json::Value message) 
         time_t time_seconds = timegm(&tm);
         
         // Final calculation in milliseconds
-        data.timestamp = (static_cast<double>(time_seconds) + seconds_fraction) * 1000.0;
+        data.timestamp = (static_cast<double>(time_seconds) + seconds_fraction);
     } else {
         // Fallback when parsing fails
-        data.timestamp = 0.0; 
+        data.timestamp = now_unix()/1000; 
     }
 
     data.arrival_time = std::time(nullptr);
@@ -387,8 +389,8 @@ std::vector<normalized_data> KrakenWS::normalise_message(Json::Value message) {
     // Kraken v1 Ticker does NOT provide a trade timestamp in the "c" field.
     // It provides a time field, but often it is better to use local time for arrival.
     // If you need the exact match time, you must subscribe to the 'trade' channel, not 'ticker'.
-    data.timestamp = std::time(nullptr); 
-    data.arrival_time = std::time(nullptr);
+    data.timestamp = now_unix(); 
+    data.arrival_time = now_unix();
 
     results.push_back(data);
 
@@ -465,8 +467,8 @@ std::vector<normalized_data> OkxWS::normalise_message(Json::Value message) {
             data.symbol = this->symbols_map[trade_info["instId"].asString()].asString();
             data.price = std::stod(trade_info["px"].asString());
             data.quantity = std::stod(trade_info["sz"].asString());
-            data.timestamp = std::stod(trade_info["ts"].asString());
-            data.arrival_time = std::time(nullptr);
+            data.timestamp = std::stod(trade_info["ts"].asString())/1000;
+            data.arrival_time = now_unix();
             results.push_back(data);
         }
     }
@@ -488,7 +490,7 @@ std::vector<normalized_data> BybitWS::normalise_message(Json::Value message) {
         data.price = std::stod(trade["lastPrice"].asString());
         data.quantity = std::stod(trade["volume24h"].asString());
         data.timestamp = message["ts"].asUInt64();
-        data.arrival_time = std::time(nullptr);
+        data.arrival_time = now_unix();
         results.push_back(data);
     }
     return results;

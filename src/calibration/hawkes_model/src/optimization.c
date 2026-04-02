@@ -101,10 +101,15 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
     reset_ll_params(ll_params);
     
     double log_sum = 0.0;
-    
-    for(int i = 0; i < history->total_events; i++) {
+    int i;
+    for(i = 0; i < history->total_events; i++) {
         double t_now = history->events[i].time;
         int type_src = history->events[i].type;
+
+        if (type_src < 0 || type_src >= N_WS) {
+            printf("Warning: Invalid source type %d at event %d/%d from calculate_ll function\n", type_src, i, history->total_events);
+            continue; // Invalide la configuration
+        }
 
         // 1. Decay global
         double dt = t_now - ll_params->last_t_global;
@@ -127,6 +132,7 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
         }
 
         // 3. Jump
+        // printf("s:%d,it:%d\ntl:%d", type_src, i, history->total_events);
         ll_params->phi[type_src] += 1.0;
         ll_params->last_t_global = t_now;
     }
@@ -138,6 +144,7 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
         double a = p->values[OFF_ALPHA + src];
         double b = p->values[OFF_BETA + src];
         integral += (a / b) * (1.0 - exp(-b * (T_max - history->events[i].time)));
+        //printf("a:%lf b:%lf \n", a, b);
     }
 
     return log_sum - integral; // On retourne LL (Maximisation)
@@ -317,9 +324,30 @@ SimplexPoint* nelder_mead_optim(
 
 // --- 6. FONCTION PRINCIPALE ---
 
+static void display_vector(double* vec, int size, char* desc) {
+    printf("%s \n", desc);
+    for (int i = 0; i < size; i++) {
+        printf("%lf ", vec[i]);
+    }
+    printf("\n");
+}
+
 ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
-    
-    // A. Allocations Globales (CRITIQUE : Il faut le faire !)
+    // printf("Affichage des events. \n");
+    // for (int i = 0; i < history->total_events; i++) {
+    //     printf("(%lf,%d)", history->events[i].time, history->events[i].type);
+    // }
+    // printf("\n (Tmax %lf, t:%d) \n", history->T_max, history->total_events);
+    // Allocations Globales
+
+    // Définition des bornes pour chaque paramètre (Mu, Alpha_i, Beta_i)
+    int n_params_local = 1 + 2 * N_WS;
+    conf->bounds = malloc(n_params_local * sizeof(param_bounds));
+    conf->bounds[0].min = 0.01; conf->bounds[0].max = 2.0; // Mu
+    for(int i=1; i<n_params_local; i++) { // Alpha & Beta
+        conf->bounds[i].min = 0.0; conf->bounds[i].max = 10.0;
+    }
+
     ModelParams* global_model = malloc(sizeof(ModelParams));
     global_model->n_dim = N_WS;
     global_model->mu = malloc(N_WS * sizeof(double));
@@ -329,14 +357,14 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
     // Buffer réutilisable pour éviter malloc dans la boucle
     LL_params* ll_params = init_ll_params(); 
 
-    // B. Boucle d'Optimisation (Dimension par Dimension)
+    // Boucle d'Optimisation (Dimension par Dimension)
     for (int k = 0; k < N_WS; k++) {
         printf("Optimisation Dimension %d / %d ...\n", k+1, N_WS);
         
         // Lancement Optim
         SimplexPoint* res = nelder_mead_optim(history, *conf, ll_params, k);
 
-        // C. Sauvegarde dans la structure globale
+        // Sauvegarde dans la structure globale
         // 1. Mu
         global_model->mu[k] = res->values[OFF_MU];
         
@@ -351,6 +379,12 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
 
         free_simplexpoint(res);
     }
+
+    // // Affichage des nouveaux paramètres
+    // printf("[C] : Paramètres \n");
+    // display_vector(global_model->alpha, N_DIM*N_DIM, "ALPHA VALUES");
+    // display_vector(global_model->beta, N_DIM*N_DIM, "BETA VALUES");
+    // display_vector(global_model->mu, N_DIM, "MU VALUES");
     
     free_ll_params(ll_params);
     return global_model;
@@ -386,14 +420,6 @@ void python_entry_point(
     NelderMeadConfig conf;
     conf.max_iter = 2000;
     conf.rho = 1.0; conf.chi = 2.0; conf.psi = 0.5; conf.sigma = 0.5;
-    
-    // Bounds simplifiés (à adapter)
-    int n_params_local = 1 + 2 * n_ws;
-    conf.bounds = malloc(n_params_local * sizeof(param_bounds));
-    conf.bounds[0].min = 0.01; conf.bounds[0].max = 2.0; // Mu
-    for(int i=1; i<n_params_local; i++) { // Alpha & Beta
-        conf.bounds[i].min = 0.0; conf.bounds[i].max = 10.0;
-    }
 
     // 3. Lancer l'optimisation
     ModelParams* res = hawkes_model_optim(&h, &conf);

@@ -26,6 +26,13 @@ inline void setCurrentThreadPriority() {
 #endif
 }
 
+inline double now_unix() {
+    // Utilisation de system_clock pour générer un timestamp aligné sur les timestamps UNIX (données)
+    // Renvoie le nombre de secondes écoulées depuis le 1er janvier 1970 (UNIX epoch) en tant que double
+    using namespace std::chrono;
+    return duration<double>(system_clock::now().time_since_epoch()).count();
+}
+
 template <typename T>
 class ThreadSafeQueue {
 private:
@@ -90,6 +97,8 @@ public:
 
 class TelemetryManager {
     public:
+        std::vector<bool> symbols_to_look_at; // Vecteur de booléen pour indiquer quels symboles sont sélectionnés pour la télémétrie
+
         struct HawkesSnapshot {
             std::vector<double> intensities;
             double timestamp;
@@ -111,6 +120,8 @@ class TelemetryManager {
         TelemetryManager(const std::vector<std::string>& syms) : symbols(syms) {
             size_t n = syms.size();
             live_data.resize(n);
+
+            this->symbols_to_look_at.resize(n, false);
             
             // Initialisation correcte des mutex (non copiables)
             mutexes.reserve(n);
@@ -121,8 +132,14 @@ class TelemetryManager {
 
         // Appelé par les workers (Ecriture exclusive)
         void update(int symbol_index, std::vector<double> intensities, double timestamp) {
+            // std::cout << "Updating telemetry for symbol index " << symbol_index << " at timestamp " << timestamp << std::endl;
+            // std::cout << "Intensities: ";
+            // for (double & intensity : intensities) {
+            //     std::cout << "i:"<<intensity<<std::endl;
+            // }
+            // std::cout << std::endl;
             if (symbol_index < 0 || symbol_index >= live_data.size()) return;
-
+            // std::cout << "Updated intensity : " << intensities[0] << std::endl;
             // On verrouille en mode exclusif
             std::unique_lock lock(*mutexes[symbol_index]);
             
@@ -134,7 +151,10 @@ class TelemetryManager {
         // Appelé par l'UI (Lecture partagée)
         Snapshot get_snapshot(int symbol_index) const {
             Snapshot snap;
-            if (symbol_index < 0 || symbol_index >= live_data.size()) return snap;
+            if (symbol_index < 0 || symbol_index >= live_data.size()) {
+                fprintf(stderr, "invalid symbol_index in TelemetryManager::get_snapshot");
+                return snap;
+            } 
 
             // On verrouille en mode partagé (plusieurs lecteurs possibles en même temps)
             std::shared_lock lock(*mutexes[symbol_index]);
@@ -142,6 +162,11 @@ class TelemetryManager {
             snap.intensities = live_data[symbol_index].intensities;
             snap.timestamp   = live_data[symbol_index].timestamp;
             snap.symbol      = symbols[symbol_index];
+
+            // if (snap.intensities.empty() || !snap.timestamp) {
+            //     fprintf(stderr, "Empty variables in get_snapshot!");
+            // }
+
             return snap;
         }
 
@@ -163,4 +188,8 @@ class TelemetryManager {
             }
             return results;
         }
+
+        void print_snapshot(int i) {
+
+        };
 };

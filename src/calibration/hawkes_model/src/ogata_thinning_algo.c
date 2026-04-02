@@ -16,7 +16,7 @@ double rand_exponential(double lambda) {
     if (lambda <= 1e-9) return 1e9; // Temps infini si lambda quasi nul
     double u = rand_uniform();
     if (u > 0.999999999) u = 0.999999999; 
-    return -log(1.0 - u) / lambda;
+    return -log(u) / lambda;
 }
 
 // --- Gestion Mémoire Historique ---

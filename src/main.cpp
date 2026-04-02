@@ -26,10 +26,10 @@ using namespace std;
 
 int main(int, char**)
 {   // Test sur 20 crypto-monnaies différentes
-    std::vector<std::string> symbols = {"BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "XRPUSD", 
-                                        "ADAUSD", "BCHUSD", "LTCUSD", "DOTUSD", "TRXUSD", 
-                                        "UNIUSD", "VETUSD", "FILUSD", "ICPUSD", "XLMUSD", 
-                                        "SUIUSD", "TAOUSD", "WLDUSD", "SKYUSD", "APEUSD"};
+    std::vector<std::string> symbols = {"BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "XRPUSD"};
+                                        // "ADAUSD", "BCHUSD", "LTCUSD", "DOTUSD", "TRXUSD", 
+                                        // "UNIUSD", "VETUSD", "FILUSD", "ICPUSD", "XLMUSD", 
+                                        // "SUIUSD", "TAOUSD", "WLDUSD", "SKYUSD", "APEUSD"
 
     // Initialisation du manageur télémétrique
     TelemetryManager telemetry_manager(symbols);
@@ -40,23 +40,23 @@ int main(int, char**)
     auto binanceWS = std::make_unique<BinanceWS>(symbols, 3, shared_queue);
     auto coinbaseWS = std::make_unique<CoinbaseWS>(symbols, 3, shared_queue);
     auto krakenWS = std::make_unique<KrakenWS>(symbols, 3, shared_queue);
-    // auto OkxWS = std::make_unique<OkxWS>(symbols, 3, shared_queue);
-    // auto BybitWS = std::make_unique<BybitWS>(symbols, 3, shared_queue);
+    auto okxWS = std::make_unique<OkxWS>(symbols, 3, shared_queue);
+    auto bybitWS = std::make_unique<BybitWS>(symbols, 3, shared_queue);
     int calibration_duration = 10; // seconds
-    int training_duration = 30;
+    int training_duration = 120;
     std::vector<std::unique_ptr<GenericWebSocket>> clients;
     // On déplace le pointeur dans le vecteur
     clients.push_back(std::move(binanceWS));
     clients.push_back(std::move(coinbaseWS));
     clients.push_back(std::move(krakenWS));
-    // clients.push_back(std::move(OkxWS));
-    // clients.push_back(std::move(BybitWS));
+    clients.push_back(std::move(okxWS));
+    clients.push_back(std::move(bybitWS));
     Json::Value websocket_map;
     websocket_map["Binance"] = 0;
     websocket_map["Coinbase"] = 1;
     websocket_map["Kraken"] = 2;
-    // websocket_map["Okx"] = 3;
-    // websocket_map["Bybit"] = 4;
+    websocket_map["OKX"] = 3;
+    websocket_map["Bybit"] = 4;
     int max_workers = 5; // On définit une valeur pour n_max_workers
     Json::Value worker_mapping;
 
@@ -86,13 +86,13 @@ int main(int, char**)
 
     UserInterface ui(*schelConfig, telemetry_manager);
 
-    // std::thread scheduler_thread([&scheduler](){
-    //     scheduler.run();
-    // });
+    std::thread scheduler_thread([&scheduler](){
+        scheduler.run();
+    });
 
     ui.main_renderer();
 
-    //scheduler_thread.join();
+    scheduler_thread.join();
 
     return 0;
 }

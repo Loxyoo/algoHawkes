@@ -3,7 +3,7 @@
 
 // On définit N ici, mais le code est conçu pour fonctionner 
 // même si cette valeur change ou est passée en argument.
-#define N_DIM 5 
+#define N_DIM 5
 
 // --- Structures ---
 typedef struct {

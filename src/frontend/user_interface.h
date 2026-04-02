@@ -13,13 +13,14 @@
 #include "../tools.h"
 #include "../scheduler.h"
 
+
 namespace DefaultParameters {
     static constexpr int WindowWidth = 1280;
     static constexpr int WindowHeight = 720;
     static const std::string title = "Bloomberg Like Terminal";
     static constexpr int CALIBRATION_TIME = 10;
     static constexpr int TRAINING_TIME = 30;
-    static constexpr int UPDATE_SPEED = 120;
+    static constexpr int UPDATE_SPEED = 60;
     static constexpr int N_MAX_WORKERS = 2;
     static const char* websockets[] = {"All", "Binance", "Coinbase", "Kraken", "Bybit", "OKX" };
     static const char* models[] = {"Hawkes", "LSTM", "Transformer"};
@@ -39,6 +40,9 @@ class UserInterface {
         SchedulerConfig& config;
         TelemetryManager& telemetry_manager;
         GLFWwindow* window;
+        int current_symbol_index = config.symbols_map[DefaultParameters::default_symbol].asInt();
+        std::vector<bool> is_symbol_selected;
+
 
         // utility structure for realtime plot
         struct ScrollingBuffer {
@@ -65,6 +69,8 @@ class UserInterface {
                 }
             }
         };
+
+        std::map<std::string, ScrollingBuffer> all_buffers;
 
         // utility structure for realtime plot
         struct RollingBuffer {
@@ -94,15 +100,14 @@ class UserInterface {
          * @brief Update the Hawkes models with the latest data. This function will be called periodically to refresh the models based on new market data and user interactions.
          */
         void update_hawkes_models();
-
         void render_scrolling_buffer();
-
         void render_title_bar();
         void render_selector_bar();
         void render_control_panel();
         void render_instrument_panel();
         void render_log_panel();
         void render_ticker_tape();
+        void render_symbol_selector();
 
         /**
          * @brief This function will be responsible for updating all models. It will be called in the main loop to ensure that the models are kept up-to-date with the latest data and user interactions.

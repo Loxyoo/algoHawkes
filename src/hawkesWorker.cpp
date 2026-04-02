@@ -2,6 +2,8 @@
 #include <iostream>
 
 #include <cmath>
+#include <chrono>
+#include <GLFW/glfw3.h> 
 
 // --------------------------
 // ---=== WORKER CLASS ===---
@@ -48,21 +50,31 @@ void Worker::run() {
     // Execution pendant durée d'entrainement
     std::cout << "Worker " << this->workerParam->worker_id << " en cours d'execution..." << std::endl;
     auto work_duration      = std::chrono::seconds(this->workerParam->training_duration);
+    
+    // Utilisation de steady_clock pour le contrôle du flux (boucles, chronomètres)
     auto start              = std::chrono::steady_clock::now();
     auto now                = std::chrono::steady_clock::now();
     auto last_optim_time    = std::chrono::steady_clock::now();
     auto OPTIM_INTERVAL     = std::chrono::seconds(10);
-    // Calculer le moment de fin (time_point)
-    auto end_point = start + work_duration;
-    // Convertir en durée depuis l'origine (time_since_epoch)
-    auto duration_since_epoch = end_point.time_since_epoch();
-    // Convertir en double (en secondes)
-    // On force la conversion en 'duration<double>' pour avoir les décimales, puis .count() extrait le nombre
+
+    // Utilisation de system_clock pour générer un T_max aligné sur les timestamps UNIX (données)
+    auto sys_start          = std::chrono::system_clock::now();
+    auto sys_end_point      = sys_start + work_duration;
+    
+    // Convertir en durée depuis l'origine
+    auto duration_since_epoch = sys_end_point.time_since_epoch();
+    double rate = 1.0 / 60.0;
+    // Convertir en double (en secondes). On a maintenant une grandeur en ~1.77e9
     double T_max = std::chrono::duration<double>(duration_since_epoch).count();
+    double last_time = glfwGetTime();
     while ((now - start) < work_duration) {
+        now = std::chrono::steady_clock::now();
+
         // std::cout << "Worker " << this->workerParam->worker_id << " : " << (now - start).count() << "s écoulées." << std::endl;
         normalized_data data;
         if (! this->inqueue.try_pop(data))
+            // Si aucune donnée n'a été reçue, on calcul l'intensité instantanée sur le temps actuel.
+            // this->models[this->target_symbol_id["BTCUSD"].asInt()].compute_virtual_intensities(glfwGetTime() - last_time);
             continue;
         // Mise à jour du modèle de hawkes associé au symbol data
         int index = this->target_symbol_id[data.symbol].asInt();
@@ -73,12 +85,18 @@ void Worker::run() {
                 // Au démarrage de l'algorithme, il y a peu de données dans le buffer
                 // S'il y en a pas assez, on attendra OPTIM_INTERAVL secondes en plus
                 if (this->models[i].n_data > 10) {
+
                     std::cout << "Envoie de " << this->models[i].n_data << " données au worker d'optimisation..." << std::endl;
                     // Envoie au worker HPC des nouvelles données recu pour le symbol associé au modèle
+                    // Copie profonde des événements pour éviter la race condition
+                    Event* events_copy = new Event[this->models[i].n_data];
+                    std::copy(this->models[i].buffer.begin(), this->models[i].buffer.end(), events_copy);
+                    
                     History history;
-                    history.events = this->models[i].buffer.data();
-                    history.total_events = this->models[i].n_data;
+                    history.events = events_copy;
+                    history.total_events = this->models[i].n_data - 1;
                     history.T_max = T_max;
+                    history.symbol = this->workerParam->assets[i].data();
                     this->opt_input_queue.push(history);
                 } else {
                     std::cout << "Not enough data to optimize." << std::endl;
@@ -93,19 +111,56 @@ void Worker::run() {
             if (new_params.status == OK) {
                 // Récupère l'indice associé au symbol du paquet recu
                 // afin de trouver le bon modèle associé
+                std::cout << new_params.symbol << std::endl;
+                // for (double & value : new_params.alpha) {
+                //     std::cout << "a="<< value << std::endl;
+                // }
                 int id = this->target_symbol_id.get(new_params.symbol, -1).asInt();
                 // Si le worker ne gère pas le symbol, nous avons alors -1
                 if (id == -1) continue;
+                
+                // std::cout << "G TROUVE UN SYMBOL QUI ME CORRESPOND !" << std::endl;
+
                 // Diffusion des nouveaux paramètres
                 int index = this->target_symbol_id[new_params.symbol].asInt();
                 this->models[index].alpha   = new_params.alpha;
                 this->models[index].beta    = new_params.beta;
-                this->models[index].mu      = new_params.beta;
+                this->models[index].mu      = new_params.mu;
+                
+                // str_new_params(new_params.alpha, new_params.beta, new_params.mu);
             } else if (new_params.status == ERROR) {
                 std::cout << "Erreur d'optimisation pour l'actif : " << new_params.symbol << std::endl;
             }
         }
         now = std::chrono::steady_clock::now();
+
+        // 1. Déterminer à quel moment cette frame DOIT se terminer
+        double target_time = last_time + rate;
+        double current_time = glfwGetTime();
+
+        // 2. Si on est en avance, on attend
+        if (current_time < target_time) {
+            // Calculer combien de secondes il reste à attendre
+            double sleep_time = target_time - current_time;
+            
+            // On endort le thread pour libérer le CPU (conversion en millisecondes)
+            // On retire 1 ms par sécurité car la fonction sleep de l'OS n'est pas parfaite à la microseconde près
+            if (sleep_time > 0.002) { 
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>((sleep_time - 0.001) * 1000)));
+            }
+
+            // Attente active très courte (busy-wait) juste pour la dernière milliseconde afin d'être super précis
+            while (glfwGetTime() < target_time) {
+                // spin
+            }
+        }
+
+        // 3. Mettre à jour last_time de manière stable (évite le micro-stuttering)
+        last_time += rate; 
+        // Note: Si l'application a complètement freezé, on reset pour éviter de rattraper le retard en accéléré
+        if (glfwGetTime() - last_time > 1.0) {
+            last_time = glfwGetTime();
+        }
     }
     std::cout << "Execution terminé! " << this->workerParam->worker_id << std::endl;
 }
@@ -134,9 +189,11 @@ HawkesModel::HawkesModel(
     this->training_duration = training_duration;
     this->websocket_map = websocket_map;
     this->symbol_id = symbol_id;
+    this->n_data = 0;
+    // this->buffer.push_back({0.0, 0}); // Initialisation du buffer avec un event fictif pour éviter les problèmes d'accès à la position 0 avant d'avoir des données réelles
 
     this->intensities.assign(this->n_websockets, 0.0);
-    this->last_time.assign(this->n_websockets, std::chrono::steady_clock::now());
+    this->last_time.assign(this->n_websockets, now_unix());
     this->mu.assign(this->n_websockets, 0.0);
     int x = this->n_websockets * this->n_websockets;
     // Théoriquement, alpha et beta sont des matrices, ici, on va géré des vecteurs
@@ -170,54 +227,78 @@ static int coord2index(int i, int j, int n) {
     return i*n+j;
 }
 
+std::vector<double> HawkesModel::compute_virtual_intensities(double dt) const {
+    int n = this->n_websockets;
+    std::vector<double> virtual_intensities(n, 0.0);
+
+    for (int i = 0; i < n; i++) {
+        double excitation = 0.0;
+        
+        // CORRECTION DE LA BOUCLE K
+        for (int k = i * n; k < (i + 1) * n; k++) {
+            // On projette le decay dans une variable LOCALE, on ne touche pas à this->phi
+            double decayed_phi = this->phi[k] * std::exp(-this->beta[k] * dt);
+            
+            excitation += this->alpha[k] * decayed_phi;
+        }
+        
+        virtual_intensities[i] = this->mu[i] + excitation;
+    }
+    this->telemetry_manager.update(0, virtual_intensities, glfwGetTime());
+    return virtual_intensities;
+}
+
+
 void HawkesModel::update_model(normalized_data data) {
     std::string exchange = data.exchange;
+    int source_idx = this->websocket_map[exchange].asInt();
     
-    auto now = std::chrono::steady_clock::now();
+    double now = data.timestamp;
 
-    // *std::max_element because it return an iterator and we want a value
-    auto prev_global_time = *std::max_element(
-        this->last_time.begin(), this->last_time.end());
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - prev_global_time) <= std::chrono::milliseconds(0)) {
-        prev_global_time = now;
+    // Remplacez votre std::max_element par une variable de classe "this->last_global_time"
+    double dt = now - this->last_global_time;
+    
+    // Protection HFT : les paquets UDP/Websockets peuvent arriver dans le désordre
+    if (dt < 0.0) {
+        dt = 0.0; 
     }
 
-    double dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - prev_global_time).count();
-    // Update de l'excitation phi
+    // 3. DECAY (Décroissance de la mémoire)
     int n = this->n_websockets;
-    if (dt > 0) {
+    if (dt > 0.0) {
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
                 int index = coord2index(i, j, n);
-                this->phi[index] = exp(-this->beta[index] * dt);
+                // Utilisation de std::exp (bonne pratique C++)
+                this->phi[index] *= std::exp(-this->beta[index] * dt);
             }
         }
     }
 
-    // Calcul de l'intensité instantannée
-    for (int i = 0; i < this->n_websockets; i++) {
-        int excitation = 0;
-        for (int k = i*n; k < i*(n+1); k++) {
+    // 4. CALCUL DE L'INTENSITÉ (Le fix est ici !)
+    for (int i = 0; i < n; i++) {
+        double excitation = 0.0; // CRITIQUE : double au lieu de int
+        for (int k = i * n; k < i * (n + 1); k++) {
             excitation += this->alpha[k] * this->phi[k];
         }
         this->intensities[i] = this->mu[i] + excitation;
     }
 
-    // Update de phi selon la formule en ajoutant le +1
-    int source_idx = this->websocket_map[exchange].asInt();
-    for (int i = 0; i < n; i++) {
-        this->phi[coord2index(i, source_idx, n)] += 1;
+    // 5. JUMP (Excitation suite au nouvel événement)
+    for (int i = 0; i < this->n_websockets; i++) {
+        // En C++, il vaut mieux ajouter 1.0 explicite pour les doubles
+        this->phi[coord2index(i, source_idx, this->n_websockets)] += 1.0; 
     }
 
-    // Mise à jour du temps
-    this->last_time[source_idx] = now;
+    // 6. MISE À JOUR DES TEMPS
+    this->last_global_time = now; // Remplace la logique du std::max_element
+    this->last_time[source_idx] = now; // Gardé si vous l'utilisez ailleurs
 
-    // Ajout de la donnée au buffer
-    Event event = {data.arrival_time, this->websocket_map[exchange].asInt()};
+    // 7. BUFFER ET TÉLÉMÉTRIE
+    Event event = {data.timestamp, source_idx};
     this->buffer.push_back(event);
     this->n_data++;
 
-    // Mise à jour de la télémétrie
     this->telemetry_manager.update(this->symbol_id, this->intensities, data.arrival_time);
 }
 
@@ -243,10 +324,10 @@ HawkesOptimizer::HawkesOptimizer(
     this->n_websockets = n_websockets;
 
     // Définitions des espaces de recherches
-    int n_params_local = 1+ 2 + this->n_websockets;
+    int n_params_local = 1+ 2 * this->n_websockets;
     std::vector<param_bounds> bounds(n_params_local);
     bounds[0].min = 0.01;
-    bounds[0].max = 0.5;
+    bounds[0].max = 2.0;
     for (int i = 1; i < n_params_local; i++) {
         bounds[i].min = 0.0;
         bounds[i].max = 10;
@@ -260,7 +341,7 @@ void HawkesOptimizer::run() {
         History history;
         while (this->opt_input_queue.try_pop(history)) {
             ModelParams *params = hawkes_model_optim(&history, &this->optimizerConfig);
-            std::cout << "Lancement de l'optimisation fiscale" << std::endl;
+            std::cout << "Lancement de l'optimisation de Nelder-Mead" << std::endl;
             // Adaptation des données recu pour le code c++
             // On copie juste les données
             // Comme la tailles des listes recu sont de taille fixe, la complexité est considéré constante ici.
@@ -272,9 +353,29 @@ void HawkesOptimizer::run() {
             // Pour le moment le status est OK, mais voir pour d'autre conditions pour envoyer des cas d'erreur ou de problème.
             formated_output_params.status = OK;
             formated_output_params.symbol = history.symbol; // Associe le symbol du modèle
+
+            delete[] history.events; // Libère la mémoire alloué pour les événements du history
             // Push dans la queue thread safe qui lie ce worker aux autres worker gérant les modèles
             // Les modèles vérifie que les paramètres sont bien à eux avant de les retirer.
             this->opt_output_queue.push(formated_output_params); 
         }
     }
+}
+
+void Worker::str_new_params(std::vector<double> alpha,std::vector<double> beta,std::vector<double> mu ) {
+    std::cout << "Valeurs alpha :" << std::endl;
+    for (auto & a : alpha) {
+        std::cout << a << " ";
+    }
+    std::cout << std::endl;
+    std::cout << "Valeurs beta :" << std::endl;
+    for (auto & a : beta) {
+        std::cout << a << " ";
+    }
+    std::cout << std::endl;
+    std::cout << "Valeurs mu :" << std::endl;
+    for (auto & a : mu) {
+        std::cout << a << " ";
+    }
+    std::cout << std::endl;
 }

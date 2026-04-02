@@ -7,11 +7,42 @@
 extern "C" {
 #endif
 
+/**
+ * @brief
+ * 
+ * @param n_params
+ * 
+ * @return SimplexPoint* 
+ */
 SimplexPoint* init_simplexpoint(int n_params);
+
+/**
+ * @brief Libère la mémoire allouée pour un SimplexPoint
+ * 
+ * @param p 
+ */
 void free_simplexpoint(SimplexPoint* p);
+
+/**
+ * @brief
+ * 
+ * @param n_params
+ * 
+ * @return Simplex*
+ */
 Simplex* init_simplex(int n_params);
+
+/**
+ * @brief
+ * 
+ * @param s 
+ * @param n_params
+ */
 void free_simplex(Simplex* s, int n_params);
+
 LL_params* init_ll_params();
+
+
 void free_ll_params(LL_params* p);
 void reset_ll_params(LL_params* p);
 

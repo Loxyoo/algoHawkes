@@ -7,7 +7,11 @@ static void glfw_error_callback(int error, const char* description) {
 }
 
 UserInterface::UserInterface(SchedulerConfig& config, TelemetryManager& telemetry_manager) : config(config), telemetry_manager(telemetry_manager) {
-
+    for (const std::string& symbol : config.symbols) {
+        all_buffers[symbol] = ScrollingBuffer();
+    }
+    this->is_symbol_selected.resize(config.symbols.size(), false);
+    this->is_symbol_selected[config.symbols_map[DefaultParameters::default_symbol].asInt()] = true;
 }
 
 int UserInterface::initialize() {
@@ -269,6 +273,7 @@ void UserInterface::render_control_panel() {
             ImGui::InputInt("Training Duration (s)", &training_duration);
             ImGui::TreePop();
         }
+        this->render_symbol_selector();
         ImGui::TreePop();
 
     }
@@ -329,45 +334,88 @@ void UserInterface::render_title_bar() {
     ImGui::End();
 }
 
+void UserInterface::render_symbol_selector() {
+    if (ImGui::TreeNode("Symbols"))
+    {
+        for (int i = 0; i < config.symbols.size(); i++) {
+            if (ImGui::Selectable(config.symbols[i].c_str(), is_symbol_selected[i])) {
+                if (is_symbol_selected[i]) {
+                    is_symbol_selected[i] = false;
+                } else {
+                    is_symbol_selected[i] = true;
+                }
+
+            }
+        }
+        ImGui::TreePop();
+    }
+}
+
 void UserInterface::render_scrolling_buffer() {
-    ImGui::Begin("Hawkes models");
-    static ScrollingBuffer sdata1, sdata2;
-    static RollingBuffer   rdata1, rdata2;
-    ImVec2 mouse = ImGui::GetMousePos();
+    ImGui::Begin("Hawkes Intensities Real-Time");
 
-    // Add points to the buffers every 0.02 seconds
-    static float t = 0, last_t = 0.0f;
-    if (t == 0 || t - last_t >= 0.02f) {
-        sdata1.AddPoint(t, mouse.x * 0.0005f);
-        rdata1.AddPoint(t, mouse.x * 0.0005f);
-        sdata2.AddPoint(t, mouse.y * 0.0005f);
-        rdata2.AddPoint(t, mouse.y * 0.0005f);
-        last_t = t;
+    // 1. Récupération des données fraîches
+    std::vector<TelemetryManager::Snapshot> snaps = telemetry_manager.get_all_snapshots();
+
+    // On utilise un temps relatif continu et stable pour le graphique (secondes depuis démarrage)
+    float t = (float)ImGui::GetTime();
+
+    // On récupère les dernières intensités de tous les actifs sélectionnés par l'utilisateur
+    // Ce sont tous les true dans is_symbol_selected
+    for (int i = 0; i < config.symbols.size(); i++) {
+        if (!is_symbol_selected[i])
+            continue;
+
+        if (i >= (int)snaps.size())
+            continue;
+
+        const auto& snap = snaps[i];
+        if (snap.intensities.empty())
+            continue;
+
+        auto it = all_buffers.find(snap.symbol);
+        if (it == all_buffers.end())
+            continue;
+
+        // Ajoute un point par intensité websocket sous la même référence de temps
+        for (int k = 0; k < 1; k++) {
+            it->second.AddPoint(t, (float)snap.intensities[k]);
+        }
     }
-    t += ImGui::GetIO().DeltaTime;
 
+    // 3. Paramètres d'affichage
     static float history = 10.0f;
-    ImGui::SliderFloat("History",&history,1,30,"%.1f s");
-    rdata1.Span = history;
-    rdata2.Span = history;
+    ImGui::SetNextItemWidth(150);
+    ImGui::SliderFloat("History Window", &history, 1, 60, "%.1f s");
 
-    static ImPlotAxisFlags flags = ImPlotAxisFlags_NoTickLabels;
+    // Paramètres d'échelle Y (L'intensité peut monter haut, on peut l'ajuster ou la mettre en auto)
+    static float y_limit = 2.0f; 
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    ImGui::DragFloat("Max Intensity Y", &y_limit, 0.1f, 0.1f, 100.0f);
 
-    if (ImPlot::BeginPlot("##Scrolling", ImVec2(-1,ImGui::GetTextLineHeight()*10))) {
-        ImPlot::SetupAxes(nullptr, nullptr, flags, flags);
-        ImPlot::SetupAxisLimits(ImAxis_X1,t - history, t, ImGuiCond_Always);
-        ImPlot::SetupAxisLimits(ImAxis_Y1,0,1);
-        ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL,0.5f);
-        ImPlot::PlotShaded("Mouse X", &sdata1.Data[0].x, &sdata1.Data[0].y, sdata1.Data.size(), -INFINITY, 0, sdata1.Offset, 2 * sizeof(float));
-        ImPlot::PlotLine("Mouse Y", &sdata2.Data[0].x, &sdata2.Data[0].y, sdata2.Data.size(), 0, sdata2.Offset, 2*sizeof(float));
-        ImPlot::EndPlot();
-    }
-    if (ImPlot::BeginPlot("##Rolling", ImVec2(-1,ImGui::GetTextLineHeight()*10))) {
-        ImPlot::SetupAxes(nullptr, nullptr, flags, flags);
-        ImPlot::SetupAxisLimits(ImAxis_X1,0,history, ImGuiCond_Always);
-        ImPlot::SetupAxisLimits(ImAxis_Y1,0,1);
-        ImPlot::PlotLine("Mouse X", &rdata1.Data[0].x, &rdata1.Data[0].y, rdata1.Data.size(), 0, 0, 2 * sizeof(float));
-        ImPlot::PlotLine("Mouse Y", &rdata2.Data[0].x, &rdata2.Data[0].y, rdata2.Data.size(), 0, 0, 2 * sizeof(float));
+    static ImPlotAxisFlags flags = ImPlotAxisFlags_None;
+
+    // 4. Graphique Scrolling (Défilant)
+    if (ImPlot::BeginPlot("##ScrollingHawkes", ImVec2(-1, 400))) {
+        ImPlot::SetupAxes("Time (s)", "λ (Intensity)", flags, flags);
+        ImPlot::SetupAxisLimits(ImAxis_X1, t - history, t, ImGuiCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, y_limit);
+
+        for (int i = 0; i < config.symbols.size(); i++) {
+            if (is_symbol_selected[i]) {
+                if (!all_buffers[snaps[i].symbol].Data.empty()) {
+                    std::string label1 = "Intensity " + snaps[i].symbol;
+                    ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL, 0.25f);
+                                    
+                    ImPlot::PlotLine(label1.c_str(), 
+                                    &all_buffers[snaps[i].symbol].Data[0].x, 
+                                    &all_buffers[snaps[i].symbol].Data[0].y, 
+                                    (int)all_buffers[snaps[i].symbol].Data.size(), 
+                                    0, all_buffers[snaps[i].symbol].Offset, 2 * sizeof(float));
+                }
+            }
+        }
         ImPlot::EndPlot();
     }
     ImGui::End();
@@ -400,7 +448,8 @@ int UserInterface::main_renderer() {
     bool show_demo_window = true;
 
     // boucle selon à temps de rafraîchissement souhaité
-    double rate = 1.0 / DefaultParameters::UPDATE_SPEED;
+    // glfwSwapInterval(0); // Vsync activé pour limiter à la fréquence de rafraîchissement du moniteur (généralement 60Hz)
+    double rate = 1.0 / DefaultParameters::UPDATE_SPEED; // Durée d'une frame en secondes
     double last_time = glfwGetTime();
     while(true) {
         if (glfwWindowShouldClose(this->window)) break;
@@ -422,7 +471,7 @@ int UserInterface::main_renderer() {
         render_log_panel();
         render_control_panel();
         render_scrolling_buffer();
-
+        
         // Rendu
         ImGui::Render();
         int display_w, display_h;
@@ -448,15 +497,39 @@ int UserInterface::main_renderer() {
 
         glfwSwapBuffers(window);
 
-        if (last_time + rate < glfwGetTime()) {
-            // Attendre la différence de temps pour atteindre le taux de rafraîchissement souhaité
-            while (last_time + rate >= glfwGetTime()) {
-                // Attente active (busy-wait) pour une précision maximale
+        // --- GESTION DU FRAMERATE ---
+        
+        // 1. Déterminer à quel moment cette frame DOIT se terminer
+        double target_time = last_time + rate;
+        double current_time = glfwGetTime();
+
+        // 2. Si on est en avance, on attend
+        if (current_time < target_time) {
+            // Calculer combien de secondes il reste à attendre
+            double sleep_time = target_time - current_time;
+            
+            // On endort le thread pour libérer le CPU (conversion en millisecondes)
+            // On retire 1 ms par sécurité car la fonction sleep de l'OS n'est pas parfaite à la microseconde près
+            if (sleep_time > 0.002) { 
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>((sleep_time - 0.001) * 1000)));
             }
+
+            // Attente active très courte (busy-wait) juste pour la dernière milliseconde afin d'être super précis
+            while (glfwGetTime() < target_time) {
+                // spin
+            }
+        }
+
+        // 3. Mettre à jour last_time de manière stable (évite le micro-stuttering)
+        last_time += rate; 
+        // Note: Si l'application a complètement freezé, on reset pour éviter de rattraper le retard en accéléré
+        if (glfwGetTime() - last_time > 1.0) {
             last_time = glfwGetTime();
         }
-        // Afficher le nombre de fps dans le terminal pour debug
-        std::cout << "FPS: " << 1.0 / (glfwGetTime() - last_time) << std::endl;
+
+        // 4. Affichage des FPS
+        // Dear ImGui calcule déjà les FPS de manière lissée et ultra précise !
+        // std::cout << "FPS: " << ImGui::GetIO().Framerate << std::endl;
     }
 
     ImGui_ImplOpenGL3_Shutdown();

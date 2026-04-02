@@ -27,12 +27,12 @@ class HawkesModel {
         TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
         bool parameters_optimized = false;
         int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
-        
+        double last_global_time = 0.0; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
     public:
         int n_data; // Number of normalized data in buffer
         std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets
         // std::vector<double> base_intensity;
-        std::vector<TimePoint> last_time;
+        std::vector<double> last_time;
         std::vector<double> alpha; // Paramètres de force pour chaques websockets
         std::vector<double> beta; // Paramètres d'oublie pour chaques websockets
         std::vector<double> mu; // Intensités de fonf pour chaques websockets
@@ -60,6 +60,7 @@ class HawkesModel {
             int symbol_id
         );
 
+        std::vector<double> compute_virtual_intensities(double dt) const;
         /**
          * @brief update the intensities in real time
          * 
@@ -96,6 +97,8 @@ class Worker {
             TelemetryManager& telemetry_manager
         );
 
+        void str_new_params(std::vector<double> alpha,std::vector<double> beta,std::vector<double> mu );
+        
         /**
          * Fonction principal de la class, envoie les paquets History au worker HPC pour l'optimisation des paramètres, recoit les nouveaux paramètres et les diffuses dans les modèles qu'il gère.
          */
