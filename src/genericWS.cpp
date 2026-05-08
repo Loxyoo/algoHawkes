@@ -489,7 +489,7 @@ std::vector<normalized_data> BybitWS::normalise_message(Json::Value message) {
         data.symbol = this->symbols_map[message["topic"].asString()].asString();
         data.price = std::stod(trade["lastPrice"].asString());
         data.quantity = std::stod(trade["volume24h"].asString());
-        data.timestamp = message["ts"].asUInt64();
+        data.timestamp = message["ts"].asUInt64() / 1000.0;
         data.arrival_time = now_unix();
         results.push_back(data);
     }

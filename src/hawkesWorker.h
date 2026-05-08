@@ -27,7 +27,7 @@ class HawkesModel {
         TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
         bool parameters_optimized = false;
         int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
-        double last_global_time = 0.0; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
+        double last_global_time; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
     public:
         int n_data; // Number of normalized data in buffer
         std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets

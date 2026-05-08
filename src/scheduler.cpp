@@ -141,11 +141,12 @@ void Scheduler::run() {
     for (; i < this->n_max_workers; i++) {
         // Création des paramètres du worker
         auto workerParam = std::make_unique<WorkerParam>();
-        workerParam->websocket_map = this->config->websocket_map;
-        workerParam->assets = temp_worker_map[i];
-        workerParam->n_websockets = this->clients.size();
+        workerParam->websocket_map    = this->config->websocket_map;
+        workerParam->symbols_map      = this->config->symbols_map;
+        workerParam->assets           = temp_worker_map[i];
+        workerParam->n_websockets     = this->clients.size();
         workerParam->training_duration = this->config->training_time;
-        workerParam->worker_id = i;
+        workerParam->worker_id        = i;
 
         // Création de la tâche sur un thread
         workers.emplace_back([this, p = std::move(workerParam)]() {

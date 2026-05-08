@@ -42,6 +42,7 @@ class UserInterface {
         GLFWwindow* window;
         int current_symbol_index = config.symbols_map[DefaultParameters::default_symbol].asInt();
         std::vector<bool> is_symbol_selected;
+        int update_speed = DefaultParameters::UPDATE_SPEED;
 
 
         // utility structure for realtime plot
@@ -70,7 +71,7 @@ class UserInterface {
             }
         };
 
-        std::map<std::string, ScrollingBuffer> all_buffers;
+        std::map<std::string, std::vector<ScrollingBuffer>> all_buffers;
 
         // utility structure for realtime plot
         struct RollingBuffer {

@@ -97,99 +97,42 @@ public:
 
 class TelemetryManager {
     public:
-        std::vector<bool> symbols_to_look_at; // Vecteur de booléen pour indiquer quels symboles sont sélectionnés pour la télémétrie
-
-        struct HawkesSnapshot {
-            std::vector<double> intensities;
-            double timestamp;
-        };
+        std::vector<bool> symbols_to_look_at;
 
         struct Snapshot {
             std::vector<double> intensities;
-            double timestamp;
             std::string symbol;
         };
 
     private:
-        std::vector<HawkesSnapshot> live_data;
+        std::vector<Snapshot> live_data;
         std::vector<std::string> symbols;
-        // On utilise un tableau de pointeurs uniques pour stabiliser les mutex en mémoire
         std::vector<std::unique_ptr<std::shared_mutex>> mutexes;
 
     public:
         TelemetryManager(const std::vector<std::string>& syms) : symbols(syms) {
             size_t n = syms.size();
             live_data.resize(n);
-
-            this->symbols_to_look_at.resize(n, false);
-            
-            // Initialisation correcte des mutex (non copiables)
+            symbols_to_look_at.resize(n, false);
             mutexes.reserve(n);
-            for (size_t i = 0; i < n; ++i) {
+            for (size_t i = 0; i < n; ++i)
                 mutexes.emplace_back(std::make_unique<std::shared_mutex>());
-            }
         }
 
-        // Appelé par les workers (Ecriture exclusive)
-        void update(int symbol_index, std::vector<double> intensities, double timestamp) {
-            // std::cout << "Updating telemetry for symbol index " << symbol_index << " at timestamp " << timestamp << std::endl;
-            // std::cout << "Intensities: ";
-            // for (double & intensity : intensities) {
-            //     std::cout << "i:"<<intensity<<std::endl;
-            // }
-            // std::cout << std::endl;
-            if (symbol_index < 0 || symbol_index >= live_data.size()) return;
-            // std::cout << "Updated intensity : " << intensities[0] << std::endl;
-            // On verrouille en mode exclusif
+        // Appelé par les workers — écrase le dernier snapshot
+        void update(int symbol_index, std::vector<double> intensities, double /*timestamp*/) {
+            if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return;
             std::unique_lock lock(*mutexes[symbol_index]);
-            
-            // Utilisation de move pour éviter une allocation mémoire lourde
             live_data[symbol_index].intensities = std::move(intensities);
-            live_data[symbol_index].timestamp = timestamp;
+            live_data[symbol_index].symbol      = symbols[symbol_index];
         }
 
-        // Appelé par l'UI (Lecture partagée)
+        // Appelé par l'UI — lit le dernier snapshot sans le consommer
         Snapshot get_snapshot(int symbol_index) const {
-            Snapshot snap;
-            if (symbol_index < 0 || symbol_index >= live_data.size()) {
-                fprintf(stderr, "invalid symbol_index in TelemetryManager::get_snapshot");
-                return snap;
-            } 
-
-            // On verrouille en mode partagé (plusieurs lecteurs possibles en même temps)
+            if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return {};
             std::shared_lock lock(*mutexes[symbol_index]);
-            
-            snap.intensities = live_data[symbol_index].intensities;
-            snap.timestamp   = live_data[symbol_index].timestamp;
-            snap.symbol      = symbols[symbol_index];
-
-            // if (snap.intensities.empty() || !snap.timestamp) {
-            //     fprintf(stderr, "Empty variables in get_snapshot!");
-            // }
-
-            return snap;
+            return live_data[symbol_index];
         }
 
-        std::vector<Snapshot> get_all_snapshots() const {
-            size_t n = symbols.size();
-            std::vector<Snapshot> results;
-            results.reserve(n); // Allocation unique pour tous les actifs
-
-            for (size_t i = 0; i < n; ++i) {
-                // On réutilise la logique de verrouillage partagé
-                std::shared_lock lock(*mutexes[i]);
-                
-                // On construit l'objet directement dans le vecteur
-                results.emplace_back(Snapshot{
-                    live_data[i].intensities, // Copie du vecteur d'intensités
-                    live_data[i].timestamp,
-                    symbols[i]
-                });
-            }
-            return results;
-        }
-
-        void print_snapshot(int i) {
-
-        };
+        size_t symbol_count() const { return symbols.size(); }
 };

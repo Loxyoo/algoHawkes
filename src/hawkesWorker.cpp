@@ -5,6 +5,8 @@
 #include <chrono>
 #include <GLFW/glfw3.h> 
 
+extern "C" void SystemLog(const char* fmt, ...);
+
 // --------------------------
 // ---=== WORKER CLASS ===---
 // --------------------------
@@ -43,6 +45,7 @@ Worker::Worker(
         );
         this->target_symbol_id[symbol] = i;
     }
+    SystemLog("Initialisation des WORKERS !");
 }
 
 // METHODS
@@ -72,13 +75,10 @@ void Worker::run() {
 
         // std::cout << "Worker " << this->workerParam->worker_id << " : " << (now - start).count() << "s écoulées." << std::endl;
         normalized_data data;
-        if (! this->inqueue.try_pop(data))
-            // Si aucune donnée n'a été reçue, on calcul l'intensité instantanée sur le temps actuel.
-            // this->models[this->target_symbol_id["BTCUSD"].asInt()].compute_virtual_intensities(glfwGetTime() - last_time);
-            continue;
-        // Mise à jour du modèle de hawkes associé au symbol data
-        int index = this->target_symbol_id[data.symbol].asInt();
-        this->models[index].update_model(data);
+        if (inqueue.try_pop(data)) {
+            int index = this->target_symbol_id[data.symbol].asInt();
+            this->models[index].update_model(data);
+        }
         // Toutes les OPTIM_INTERVAL secondes, on optimise les paramètres
         if ((now - last_optim_time) >= OPTIM_INTERVAL) {
             for (int i = 0; i < this->n_assets; i++) {
@@ -132,6 +132,12 @@ void Worker::run() {
                 std::cout << "Erreur d'optimisation pour l'actif : " << new_params.symbol << std::endl;
             }
         }
+
+        double current_unix = now_unix();
+        for (int i = 0; i < this->n_assets; i++) {
+            this->models[i].compute_virtual_intensities(current_unix);
+        }
+
         now = std::chrono::steady_clock::now();
 
         // 1. Déterminer à quel moment cette frame DOIT se terminer
@@ -140,22 +146,11 @@ void Worker::run() {
 
         // 2. Si on est en avance, on attend
         if (current_time < target_time) {
-            // Calculer combien de secondes il reste à attendre
             double sleep_time = target_time - current_time;
-            
-            // On endort le thread pour libérer le CPU (conversion en millisecondes)
-            // On retire 1 ms par sécurité car la fonction sleep de l'OS n'est pas parfaite à la microseconde près
-            if (sleep_time > 0.002) { 
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>((sleep_time - 0.001) * 1000)));
-            }
-
-            // Attente active très courte (busy-wait) juste pour la dernière milliseconde afin d'être super précis
-            while (glfwGetTime() < target_time) {
-                // spin
-            }
+            std::this_thread::sleep_for(std::chrono::duration<double>(sleep_time));
         }
 
-        // 3. Mettre à jour last_time de manière stable (évite le micro-stuttering)
+        // Mettre à jour last_time de manière stable (évite le micro-stuttering)
         last_time += rate; 
         // Note: Si l'application a complètement freezé, on reset pour éviter de rattraper le retard en accéléré
         if (glfwGetTime() - last_time > 1.0) {
@@ -193,6 +188,7 @@ HawkesModel::HawkesModel(
     // this->buffer.push_back({0.0, 0}); // Initialisation du buffer avec un event fictif pour éviter les problèmes d'accès à la position 0 avant d'avoir des données réelles
 
     this->intensities.assign(this->n_websockets, 0.0);
+    this->last_global_time = now_unix();
     this->last_time.assign(this->n_websockets, now_unix());
     this->mu.assign(this->n_websockets, 0.0);
     int x = this->n_websockets * this->n_websockets;
@@ -227,14 +223,16 @@ static int coord2index(int i, int j, int n) {
     return i*n+j;
 }
 
-std::vector<double> HawkesModel::compute_virtual_intensities(double dt) const {
+std::vector<double> HawkesModel::compute_virtual_intensities(double current_time) const {
     int n = this->n_websockets;
     std::vector<double> virtual_intensities(n, 0.0);
+
+    double dt = (current_time - this->last_global_time);
+    if (dt < 0.0) dt = 0.0;
 
     for (int i = 0; i < n; i++) {
         double excitation = 0.0;
         
-        // CORRECTION DE LA BOUCLE K
         for (int k = i * n; k < (i + 1) * n; k++) {
             // On projette le decay dans une variable LOCALE, on ne touche pas à this->phi
             double decayed_phi = this->phi[k] * std::exp(-this->beta[k] * dt);
@@ -242,9 +240,9 @@ std::vector<double> HawkesModel::compute_virtual_intensities(double dt) const {
             excitation += this->alpha[k] * decayed_phi;
         }
         
-        virtual_intensities[i] = this->mu[i] + excitation;
+        virtual_intensities[i] = std::max(0.0, this->mu[i] + excitation);
     }
-    this->telemetry_manager.update(0, virtual_intensities, glfwGetTime());
+    this->telemetry_manager.update(this->symbol_id, virtual_intensities, glfwGetTime());
     return virtual_intensities;
 }
 
@@ -275,13 +273,13 @@ void HawkesModel::update_model(normalized_data data) {
         }
     }
 
-    // 4. CALCUL DE L'INTENSITÉ (Le fix est ici !)
+    // 4. CALCUL DE L'INTENSITÉ
     for (int i = 0; i < n; i++) {
-        double excitation = 0.0; // CRITIQUE : double au lieu de int
-        for (int k = i * n; k < i * (n + 1); k++) {
+        double excitation = 0.0;
+        for (int k = i * n; k < (i + 1) * n; k++) {
             excitation += this->alpha[k] * this->phi[k];
         }
-        this->intensities[i] = this->mu[i] + excitation;
+        this->intensities[i] = std::max(0.0, this->mu[i] + excitation);
     }
 
     // 5. JUMP (Excitation suite au nouvel événement)
@@ -299,7 +297,11 @@ void HawkesModel::update_model(normalized_data data) {
     this->buffer.push_back(event);
     this->n_data++;
 
-    this->telemetry_manager.update(this->symbol_id, this->intensities, data.arrival_time);
+    if (this->n_data > 50000) {
+        int prune_count = 10000;
+        this->buffer.erase(this->buffer.begin(), this->buffer.begin()+prune_count);
+        this->n_data -= prune_count;
+    }
 }
 
 // ------------------------------------
@@ -343,12 +345,12 @@ void HawkesOptimizer::run() {
             ModelParams *params = hawkes_model_optim(&history, &this->optimizerConfig);
             std::cout << "Lancement de l'optimisation de Nelder-Mead" << std::endl;
             // Adaptation des données recu pour le code c++
-            // On copie juste les données
+            // /!\ On copie juste les données
             // Comme la tailles des listes recu sont de taille fixe, la complexité est considéré constante ici.
             opt_hawkesParams formated_output_params;
-            int n_params_local = 1 + 2 * this->n_websockets;
-            formated_output_params.alpha.assign(params->alpha, params->alpha + n_params_local);
-            formated_output_params.beta.assign(params->beta, params->beta + n_params_local);
+            int n_matrix_elements = this->n_websockets * this->n_websockets;
+            formated_output_params.alpha.assign(params->alpha, params->alpha + n_matrix_elements);
+            formated_output_params.beta.assign(params->beta, params->beta + n_matrix_elements);
             formated_output_params.mu.assign(params->mu, params->mu + this->n_websockets);
             // Pour le moment le status est OK, mais voir pour d'autre conditions pour envoyer des cas d'erreur ou de problème.
             formated_output_params.status = OK;
