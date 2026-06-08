@@ -1,16 +1,18 @@
 #include "user_interface.h"
 
-
-
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
 
-UserInterface::UserInterface(SchedulerConfig& config, TelemetryManager& telemetry_manager) : config(config), telemetry_manager(telemetry_manager) {
+UserInterface::UserInterface(SchedulerConfig& config, TelemetryManager& telemetry_manager)
+    : config(config), telemetry_manager(telemetry_manager)
+{
+    // Pré-alloue un vecteur de buffers vide pour chaque symbole connu
     for (const std::string& symbol : config.symbols) {
         all_buffers[symbol] = std::vector<ScrollingBuffer>();
     }
     this->is_symbol_selected.resize(config.symbols.size(), false);
+    // Active le symbole par défaut à l'ouverture
     this->is_symbol_selected[config.symbols_map[DefaultParameters::default_symbol].asInt()] = true;
 }
 
@@ -20,6 +22,7 @@ int UserInterface::initialize() {
 
     const char* glsl_version = nullptr;
 
+    // macOS impose OpenGL 3.2 Core Profile et forward-compatible context
     #if defined(__APPLE__)
         glsl_version = "#version 150";
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -33,42 +36,45 @@ int UserInterface::initialize() {
     #endif
 
     this->window = glfwCreateWindow(
-        DefaultParameters::WindowWidth, 
-        DefaultParameters::WindowHeight, 
-        DefaultParameters::title.c_str(), 
+        DefaultParameters::WindowWidth,
+        DefaultParameters::WindowHeight,
+        DefaultParameters::title.c_str(),
         NULL, NULL);
     if (this->window == NULL) return 1;
-    glfwMakeContextCurrent(this->window);
-    glfwSwapInterval(0); // VSync désactivé — le framerate est géré manuellement
 
-    // L'initialisation de l'interface graphique est terminée
+    glfwMakeContextCurrent(this->window);
+    glfwSwapInterval(0); // VSync désactivé — le framerate est géré manuellement via busy-wait
+
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Selector Bar — barre fixée tout en haut (exchange, modèle, symbole)
+// ---------------------------------------------------------------------------
 void UserInterface::render_selector_bar() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos); // Fixé tout en haut
-    
-    // Définir la hauteur de la Selector Bar
-    float selector_bar_height = ImGui::GetFrameHeight() + 8.0f; 
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+
+    float selector_bar_height = ImGui::GetFrameHeight() + 8.0f;
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, selector_bar_height));
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | 
-                                    ImGuiWindowFlags_NoMove | 
-                                    ImGuiWindowFlags_NoResize | 
-                                    ImGuiWindowFlags_NoSavedSettings | 
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration |
+                                    ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoSavedSettings |
                                     ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoDocking;
 
     ImGui::Begin("Selector Bar", NULL, window_flags);
 
     static int current_websocket = 0;
-    static int current_model = 0;
-    static char symbol[32] = "";
+    static int current_model     = 0;
+    static char symbol[32]       = "";
 
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    // Répartit les 3 widgets sur toute la largeur disponible avec espacement uniforme
+    float spacing       = ImGui::GetStyle().ItemSpacing.x;
     float available_width = ImGui::GetContentRegionAvail().x;
-    float item_width = (available_width - (spacing * 2.0f)) / 3.0f;
+    float item_width    = (available_width - (spacing * 2.0f)) / 3.0f;
 
     ImGui::SetNextItemWidth(item_width);
     ImGui::Combo("##combo", &current_websocket, DefaultParameters::websockets, IM_ARRAYSIZE(DefaultParameters::websockets));
@@ -79,17 +85,24 @@ void UserInterface::render_selector_bar() {
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(item_width);
+    // CharsUppercase force la saisie en majuscules pour être cohérent avec les symboles de marché
     ImGui::InputText("##Symbols", symbol, IM_ARRAYSIZE(symbol), ImGuiInputTextFlags_CharsUppercase);
 
     ImGui::End();
 }
 
+// ---------------------------------------------------------------------------
+// Log Panel — fenêtre de logs textuels avec filtre et auto-scroll
+// ---------------------------------------------------------------------------
+
+/// Structure interne maintenant un buffer de texte et les offsets de lignes pour
+/// un accès O(1) à chaque ligne (nécessaire pour ImGuiListClipper).
 struct ExampleAppLog
 {
     ImGuiTextBuffer     Buf;
     ImGuiTextFilter     Filter;
-    ImVector<int>       LineOffsets; // Index to lines offset. We maintain this with AddLog() calls.
-    bool                AutoScroll;  // Keep scrolling if already at the bottom.
+    ImVector<int>       LineOffsets; ///< Offset de début de chaque ligne dans Buf
+    bool                AutoScroll;  ///< Si true, force le scroll en bas à chaque frame
 
     ExampleAppLog()
     {
@@ -97,26 +110,27 @@ struct ExampleAppLog
         Clear();
     }
 
-    void    Clear()
+    void Clear()
     {
         Buf.clear();
         LineOffsets.clear();
-        LineOffsets.push_back(0);
+        LineOffsets.push_back(0); // La première ligne commence à l'offset 0
     }
 
-    void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+    void AddLog(const char* fmt, ...) IM_FMTARGS(2)
     {
         int old_size = Buf.size();
         va_list args;
         va_start(args, fmt);
         Buf.appendfv(fmt, args);
         va_end(args);
+        // Met à jour l'index des offsets de lignes pour chaque '\n' ajouté
         for (int new_size = Buf.size(); old_size < new_size; old_size++)
             if (Buf[old_size] == '\n')
                 LineOffsets.push_back(old_size + 1);
     }
 
-    void    Draw(const char* title, bool* p_open = NULL)
+    void Draw(const char* title, bool* p_open = NULL)
     {
         if (!ImGui::Begin(title, p_open))
         {
@@ -124,14 +138,12 @@ struct ExampleAppLog
             return;
         }
 
-        // Options menu
         if (ImGui::BeginPopup("Options"))
         {
             ImGui::Checkbox("Auto-scroll", &AutoScroll);
             ImGui::EndPopup();
         }
 
-        // Main window
         if (ImGui::Button("Options"))
             ImGui::OpenPopup("Options");
         ImGui::SameLine();
@@ -145,43 +157,31 @@ struct ExampleAppLog
 
         if (ImGui::BeginChild("scrolling", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar))
         {
-            if (clear)
-                Clear();
-            if (copy)
-                ImGui::LogToClipboard();
+            if (clear) Clear();
+            if (copy)  ImGui::LogToClipboard();
 
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-            const char* buf = Buf.begin();
+            const char* buf     = Buf.begin();
             const char* buf_end = Buf.end();
+
             if (Filter.IsActive())
             {
-                // In this example we don't use the clipper when Filter is enabled.
-                // This is because we don't have random access to the result of our filter.
-                // A real application processing logs with ten of thousands of entries may want to store the result of
-                // search/filter.. especially if the filtering function is not trivial (e.g. reg-exp).
+                // Avec un filtre actif on ne peut pas utiliser le clipper car on n'a pas
+                // d'accès aléatoire aux lignes visibles — on parcourt tout le buffer
                 for (int line_no = 0; line_no < LineOffsets.Size; line_no++)
                 {
                     const char* line_start = buf + LineOffsets[line_no];
-                    const char* line_end = (line_no + 1 < LineOffsets.Size) ? (buf + LineOffsets[line_no + 1] - 1) : buf_end;
+                    const char* line_end   = (line_no + 1 < LineOffsets.Size)
+                                             ? (buf + LineOffsets[line_no + 1] - 1)
+                                             : buf_end;
                     if (Filter.PassFilter(line_start, line_end))
                         ImGui::TextUnformatted(line_start, line_end);
                 }
             }
             else
             {
-                // The simplest and easy way to display the entire buffer:
-                //   ImGui::TextUnformatted(buf_begin, buf_end);
-                // And it'll just work. TextUnformatted() has specialization for large blob of text and will fast-forward
-                // to skip non-visible lines. Here we instead demonstrate using the clipper to only process lines that are
-                // within the visible area.
-                // If you have tens of thousands of items and their processing cost is non-negligible, coarse clipping them
-                // on your side is recommended. Using ImGuiListClipper requires
-                // - A) random access into your data
-                // - B) items all being the  same height,
-                // both of which we can handle since we have an array pointing to the beginning of each line of text.
-                // When using the filter (in the block of code above) we don't have random access into the data to display
-                // anymore, which is why we don't use the clipper. Storing or skimming through the search result would make
-                // it possible (and would be recommended if you want to search through tens of thousands of entries).
+                // Sans filtre, le clipper ne rend que les lignes visibles à l'écran
+                // ce qui évite de trop consommer le CPU sur de gros volumes de logs
                 ImGuiListClipper clipper;
                 clipper.Begin(LineOffsets.Size);
                 while (clipper.Step())
@@ -189,7 +189,9 @@ struct ExampleAppLog
                     for (int line_no = clipper.DisplayStart; line_no < clipper.DisplayEnd; line_no++)
                     {
                         const char* line_start = buf + LineOffsets[line_no];
-                        const char* line_end = (line_no + 1 < LineOffsets.Size) ? (buf + LineOffsets[line_no + 1] - 1) : buf_end;
+                        const char* line_end   = (line_no + 1 < LineOffsets.Size)
+                                                 ? (buf + LineOffsets[line_no + 1] - 1)
+                                                 : buf_end;
                         ImGui::TextUnformatted(line_start, line_end);
                     }
                 }
@@ -197,8 +199,8 @@ struct ExampleAppLog
             }
             ImGui::PopStyleVar();
 
-            // Keep up at the bottom of the scroll region if we were already at the bottom at the beginning of the frame.
-            // Using a scrollbar or mouse-wheel will take away from the bottom edge.
+            // Auto-scroll : ne force le bas que si l'utilisateur était déjà en bas
+            // (permet de scroller vers le haut sans être ramené automatiquement)
             if (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
                 ImGui::SetScrollHereY(1.0f);
         }
@@ -208,153 +210,162 @@ struct ExampleAppLog
 };
 
 void UserInterface::render_log_panel() {
-    static ExampleAppLog log;
+    static ExampleAppLog log; // Instance statique unique — persiste entre les frames
     log.Draw("Example: Log");
 }
 
+// ---------------------------------------------------------------------------
+// Control Panel — contrôles Hawkes : workers, calibration, entraînement, symboles
+// ---------------------------------------------------------------------------
 void UserInterface::render_control_panel() {
     ImGui::Begin("Control Panel");
+
     static ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_DrawLinesFull | ImGuiTreeNodeFlags_DefaultOpen;
-    ImGui::CheckboxFlags("ImGuiTreeNodeFlags_DrawLinesNone", &base_flags, ImGuiTreeNodeFlags_DrawLinesNone);
-    ImGui::CheckboxFlags("ImGuiTreeNodeFlags_DrawLinesFull", &base_flags, ImGuiTreeNodeFlags_DrawLinesFull);
+    ImGui::CheckboxFlags("ImGuiTreeNodeFlags_DrawLinesNone",    &base_flags, ImGuiTreeNodeFlags_DrawLinesNone);
+    ImGui::CheckboxFlags("ImGuiTreeNodeFlags_DrawLinesFull",    &base_flags, ImGuiTreeNodeFlags_DrawLinesFull);
     ImGui::CheckboxFlags("ImGuiTreeNodeFlags_DrawLinesToNodes", &base_flags, ImGuiTreeNodeFlags_DrawLinesToNodes);
+
     if (ImGui::TreeNodeEx("Hawkes Model", base_flags)) {
+
+        // --- Performance ---
         if (ImGui::TreeNodeEx("Performance Controls", base_flags)) {
             static int n_workers = DefaultParameters::N_MAX_WORKERS;
-            ImGui::SliderInt("Number of Workers", &n_workers, 1, 10);
+            ImGui::SliderInt("Number of Workers",        &n_workers,          1, 10);
             ImGui::SliderInt("Update Speed (per seconds)", &this->update_speed, 1, 200);
             ImGui::TreePop();
         }
+
+        // --- Calibration ---
         if (ImGui::TreeNodeEx("Calibration Controls", base_flags)) {
             ImGui::Text("Select Exchanges to Connect:");
             ImGui::Spacing();
 
-            // On utilise un vecteur de booléens statique pour garder l'état entre les frames
+            // Boutons toggle colorés : vert = connecté, gris/rouge = déconnecté
             static std::vector<std::string> exchanges = {"Binance", "Coinbase", "Kraken", "Bybit", "OKX"};
-            static bool states[5] = {true, true, true, false, false}; // États par défaut
+            static bool states[5] = {true, true, true, false, false};
 
             const ImVec2 button_size = ImVec2(80, 40);
 
-            for (int i = 0; i < exchanges.size(); i++) {
+            for (int i = 0; i < (int)exchanges.size(); i++) {
                 if (i > 0) ImGui::SameLine();
-
                 ImGui::PushID(i);
 
-                // 1. Définition de la couleur selon l'état (Vert si ON, Rouge/Gris si OFF)
                 if (states[i]) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));         // Vert
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.8f, 0.0f, 1.0f));  // Vert clair
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.0f, 0.4f, 0.0f, 1.0f));   // Vert foncé
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.8f, 0.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.0f, 0.4f, 0.0f, 1.0f));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));         // Gris
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));  // Rouge pâle
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.1f, 0.1f, 1.0f));   // Rouge
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
                 }
 
-                // 2. Dessin du bouton
                 if (ImGui::Button(exchanges[i].c_str(), button_size)) {
-                    states[i] = !states[i]; // Toggle de l'état
-                    
-                    // --- C'est ici que tu mettrais à jour ton SchedulerConfig ---
+                    states[i] = !states[i];
+                    // TODO: propager l'état au SchedulerConfig
                     // config.websocket_map[exchanges[i]].active = states[i];
                 }
 
-                // 3. ON DÉPILE TOUJOURS LES COULEURS APRÈS LE BOUTON
-                ImGui::PopStyleColor(3);
+                ImGui::PopStyleColor(3); // Toujours dépiler le même nombre que PushStyleColor
                 ImGui::PopID();
             }
+
             static int calibration_duration = DefaultParameters::CALIBRATION_TIME;
             ImGui::InputInt("Calibration Duration (s)", &calibration_duration);
             ImGui::TreePop();
         }
+
+        // --- Entraînement ---
         if (ImGui::TreeNodeEx("Training Controls", base_flags)) {
             static int training_duration = DefaultParameters::TRAINING_TIME;
             ImGui::InputInt("Training Duration (s)", &training_duration);
             ImGui::TreePop();
         }
+
         this->render_symbol_selector();
         ImGui::TreePop();
-
     }
 
     ImGui::Spacing();
     ImGui::Separator();
-    
+
     if (ImGui::Button("START CALIBRATION", ImVec2(-1, 40))) {
-        // Logique de lancement
+        // TODO: lancer la calibration
     }
 
     ImGui::End();
 }
 
 void UserInterface::update_hawkes_models() {
-    
+    // TODO: appliquer les mises à jour de paramètres déclenchées depuis l'UI
 }
 
+// ---------------------------------------------------------------------------
+// Title Bar — barre fixe sous la selector bar avec horloge temps réel
+// ---------------------------------------------------------------------------
 void UserInterface::render_title_bar() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    
-    // 1. On récupère la hauteur de la barre au-dessus pour savoir de combien on doit descendre
-    float selector_bar_height = ImGui::GetFrameHeight() + 8.0f; 
-    
-    // 2. On décale la position Y vers le bas en ajoutant 'selector_bar_height'
+
+    // Positionne la title bar juste en dessous de la selector bar
+    float selector_bar_height = ImGui::GetFrameHeight() + 8.0f;
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + selector_bar_height));
-    
-    float title_bar_height = ImGui::GetFrameHeight() + 8.0f; 
+
+    float title_bar_height = ImGui::GetFrameHeight() + 8.0f;
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, title_bar_height));
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | 
-                                    ImGuiWindowFlags_NoMove | 
-                                    ImGuiWindowFlags_NoResize | 
-                                    ImGuiWindowFlags_NoSavedSettings | 
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration |
+                                    ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoSavedSettings |
                                     ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoDocking;
 
     ImGui::Begin("Title Bar", NULL, window_flags);
 
-    // --- Contenu de gauche ---
     ImGui::Text("Hawkes Models Dashboard");
     ImGui::SameLine();
     ImGui::TextDisabled(" - Real-time Monitoring and Control");
 
-    // --- Contenu de droite (Horloge) ---
-    auto t = std::time(nullptr);
-    auto tm = *std::localtime(&t);
+    // Affiche l'heure locale alignée à droite
+    auto t   = std::time(nullptr);
+    auto tm  = *std::localtime(&t);
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     std::string time_str = oss.str();
 
     float time_text_width = ImGui::CalcTextSize(time_str.c_str()).x;
-    float padding_right = ImGui::GetStyle().WindowPadding.x;
-    
+    float padding_right   = ImGui::GetStyle().WindowPadding.x;
+
     ImGui::SameLine(ImGui::GetWindowWidth() - time_text_width - padding_right);
     ImGui::Text("%s", time_str.c_str());
 
     ImGui::End();
 }
 
+// ---------------------------------------------------------------------------
+// Symbol Selector — arborescence de sélection multiple des symboles
+// ---------------------------------------------------------------------------
 void UserInterface::render_symbol_selector() {
     if (ImGui::TreeNode("Symbols"))
     {
-        for (int i = 0; i < config.symbols.size(); i++) {
+        for (int i = 0; i < (int)config.symbols.size(); i++) {
+            // Selectable avec état persistant dans is_symbol_selected
             if (ImGui::Selectable(config.symbols[i].c_str(), is_symbol_selected[i])) {
-                if (is_symbol_selected[i]) {
-                    is_symbol_selected[i] = false;
-                } else {
-                    is_symbol_selected[i] = true;
-                }
-
+                is_symbol_selected[i] = !is_symbol_selected[i];
             }
         }
         ImGui::TreePop();
     }
 }
 
+// ---------------------------------------------------------------------------
+// Scrolling Buffer — graphique défilant des intensités λ(t) en temps réel
+// ---------------------------------------------------------------------------
 void UserInterface::render_scrolling_buffer() {
-
     ImGui::Begin("Hawkes Intensities Real-Time");
 
-    // Chaque render frame : lecture du dernier snapshot et ajout d'un point par websocket
+    // Chaque frame : on récupère le dernier snapshot de chaque symbole sélectionné
+    // et on ajoute un point par exchange dans le buffer correspondant
     float t_render = (float)ImGui::GetTime();
     for (int i = 0; i < (int)config.symbols.size(); i++) {
         if (!is_symbol_selected[i])
@@ -364,8 +375,9 @@ void UserInterface::render_scrolling_buffer() {
         if (snap.intensities.empty())
             continue;
 
-        const std::string& sym = config.symbols[i];
-        auto& bufs = all_buffers[sym];
+        const std::string& sym  = config.symbols[i];
+        auto& bufs              = all_buffers[sym];
+        // Crée les buffers manquants si un nouvel exchange apparaît dans le snapshot
         if (bufs.size() < snap.intensities.size())
             bufs.resize(snap.intensities.size());
 
@@ -373,13 +385,12 @@ void UserInterface::render_scrolling_buffer() {
             bufs[k].AddPoint(t_render, (float)snap.intensities[k]);
     }
 
-    // 3. Paramètres d'affichage
+    // Contrôles d'affichage
     static float history = 10.0f;
     ImGui::SetNextItemWidth(150);
     ImGui::SliderFloat("History Window", &history, 1, 60, "%.1f s");
 
-    // Paramètres d'échelle Y (L'intensité peut monter haut, on peut l'ajuster ou la mettre en auto)
-    static float y_limit = 2.0f; 
+    static float y_limit = 2.0f;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(150);
     ImGui::DragFloat("Max Intensity Y", &y_limit, 0.1f, 0.1f, 100.0f);
@@ -387,9 +398,9 @@ void UserInterface::render_scrolling_buffer() {
     static ImPlotAxisFlags flags = ImPlotAxisFlags_None;
     float t_now = (float)ImGui::GetTime();
 
-    // 4. Graphique Scrolling (Défilant)
     if (ImPlot::BeginPlot("##ScrollingHawkes", ImVec2(-1, 400))) {
         ImPlot::SetupAxes("Time (s)", "λ (Intensity)", flags, flags);
+        // Fenêtre X glissante : on force ImGuiCond_Always pour qu'elle suive le temps réel
         ImPlot::SetupAxisLimits(ImAxis_X1, t_now - history, t_now, ImGuiCond_Always);
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, y_limit);
 
@@ -400,7 +411,9 @@ void UserInterface::render_scrolling_buffer() {
             for (int k = 0; k < (int)bufs.size(); k++) {
                 auto& buf = bufs[k];
                 if (buf.Data.empty()) continue;
-                std::string label = sym + " [ws" + std::to_string(k) + "]";
+                // k+1 car websockets[0] = "All" (agrégé) ; k=0 correspond à websockets[1]
+                const std::string& websocket = DefaultParameters::websockets[k + 1];
+                std::string label = sym + " [" + websocket + "]";
                 ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL, 0.25f);
                 ImPlot::PlotLine(label.c_str(),
                                  &buf.Data[0].x,
@@ -414,6 +427,42 @@ void UserInterface::render_scrolling_buffer() {
     ImGui::End();
 }
 
+// ---------------------------------------------------------------------------
+// QQ Plot — diagnostic de calibration (données synthétiques provisoires)
+// ---------------------------------------------------------------------------
+void UserInterface::render_qq_plot() {
+    ImGui::Begin("QQ Plot");
+
+    // TODO: remplacer ces données synthétiques par les résidus du modèle Hawkes calibré
+    srand(0);
+    static float xs1[100], ys1[100];
+    for (int i = 0; i < 100; ++i) {
+        xs1[i] = i * 0.01f;
+        ys1[i] = xs1[i] + 0.1f * ((float)rand() / (float)RAND_MAX);
+    }
+    static float xs2[50], ys2[50];
+    for (int i = 0; i < 50; i++) {
+        xs2[i] = 0.25f + 0.2f * ((float)rand() / (float)RAND_MAX);
+        ys2[i] = 0.75f + 0.2f * ((float)rand() / (float)RAND_MAX);
+    }
+
+    if (ImPlot::BeginPlot("Scatter Plot")) {
+        ImPlot::PlotScatter("Data 1", xs1, ys1, 100);
+        ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 6,
+                                   ImPlot::GetColormapColor(1), IMPLOT_AUTO,
+                                   ImPlot::GetColormapColor(1));
+        ImPlot::PlotScatter("Data 2", xs2, ys2, 50);
+        ImPlot::PopStyleVar();
+        ImPlot::EndPlot();
+    }
+
+    ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
+// Main Renderer — boucle principale ImGui + OpenGL avec gestion du framerate
+// ---------------------------------------------------------------------------
 int UserInterface::main_renderer() {
     initialize();
 
@@ -421,9 +470,9 @@ int UserInterface::main_renderer() {
     ImGui::CreateContext();
     ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;    // Fenêtres dockables entre elles
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;  // Fenêtres détachables hors de la fenêtre principale
 
     #if defined(__APPLE__)
     const char* glsl_version = "#version 150";
@@ -431,18 +480,17 @@ int UserInterface::main_renderer() {
     const char* glsl_version = "#version 130";
     #endif
 
-    // Liaison avec GLFW
-    ImGui_ImplGlfw_InitForOpenGL(this->window, true); 
-    // Liaison avec OpenGL3
+    ImGui_ImplGlfw_InitForOpenGL(this->window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
     ImVec4 clear_color = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
 
     bool show_demo_window = false;
 
-    double rate = 1.0 / this->update_speed;
+    double rate      = 1.0 / this->update_speed;
     double last_time = glfwGetTime();
-    while(true) {
+
+    while (true) {
         if (glfwWindowShouldClose(this->window)) break;
 
         glfwPollEvents();
@@ -451,33 +499,26 @@ int UserInterface::main_renderer() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // Initialisation du dockspace pour permettre le docking des fenêtres
+        // DockSpace global — doit être le premier widget rendu chaque frame
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
-        // Met à jour l'affichage du control panel des modèles de Hawkes
-        // render_title_bar();
-        // render_selector_bar();
         if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
+
         update_hawkes_models();
         render_log_panel();
         render_control_panel();
         render_scrolling_buffer();
-        
-        // Rendu
+
+        // Rendu OpenGL
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(
-            clear_color.x, 
-            clear_color.y, 
-            clear_color.z, 
-            clear_color.w);
+        glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         glClear(GL_COLOR_BUFFER_BIT);
-
-        
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
+        // Mise à jour des viewports détachés (multi-fenêtres)
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             GLFWwindow* backup_current_context = glfwGetCurrentContext();
@@ -488,39 +529,28 @@ int UserInterface::main_renderer() {
 
         glfwSwapBuffers(window);
 
-        // --- GESTION DU FRAMERATE ---
+        // --- Gestion précise du framerate ---
+        // Stratégie : sleep OS jusqu'à ~1 ms avant l'échéance, puis busy-wait
+        // pour absorber l'imprécision du scheduler OS sans surcharger le CPU.
         rate = 1.0 / this->update_speed;
-        // 1. Déterminer à quel moment cette frame DOIT se terminer
-        double target_time = last_time + rate;
+        double target_time  = last_time + rate;
         double current_time = glfwGetTime();
 
-        // 2. Si on est en avance, on attend
         if (current_time < target_time) {
-            // Calculer combien de secondes il reste à attendre
             double sleep_time = target_time - current_time;
-            
-            // On endort le thread pour libérer le CPU (conversion en millisecondes)
-            // On retire 1 ms par sécurité car la fonction sleep de l'OS n'est pas parfaite à la microseconde près
-            if (sleep_time > 0.002) { 
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>((sleep_time - 0.001) * 1000)));
+            if (sleep_time > 0.002) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(static_cast<int>((sleep_time - 0.001) * 1000)));
             }
-
-            // Attente active très courte (busy-wait) juste pour la dernière milliseconde afin d'être super précis
-            while (glfwGetTime() < target_time) {
-                // spin
-            }
+            while (glfwGetTime() < target_time) { /* spin */ }
         }
 
-        // 3. Mettre à jour last_time de manière stable (évite le micro-stuttering)
-        last_time += rate; 
-        // Note: Si l'application a complètement freezé, on reset pour éviter de rattraper le retard en accéléré
+        // Avance last_time de manière stable (évite l'accumulation de drift)
+        last_time += rate;
+        // Reset si l'app a été gelée plus d'1 s (ex: resize, mise en veille)
         if (glfwGetTime() - last_time > 1.0) {
             last_time = glfwGetTime();
         }
-
-        // 4. Affichage des FPS
-        // Dear ImGui calcule déjà les FPS de manière lissée et ultra précise !
-        // std::cout << "FPS: " << ImGui::GetIO().Framerate << std::endl;
     }
 
     ImGui_ImplOpenGL3_Shutdown();

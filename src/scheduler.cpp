@@ -110,21 +110,41 @@ void Scheduler::run() {
         });
     }
 
-    // Lancement de la calibration sur un autre thread
-    // Cette calibration ne ralentit pas la réception des données
-    std::thread calibrationThread([this]() {
-        std::cout << "Starting Calibration Engine..." << std::endl;
-        std::vector<volume_symbol> assets_volume = this->calibration.evaluate_assets_volumes(this->config->calibration_time);
-        std::cout << "Fin de la calibration" << std::endl;
-        // for (volume_symbol volume: assets_volume) std::cout << volume.volume << std::endl;
-        // Résolution greedy du worker packing / Bin packing
-        // Afin que la quantité de travail entre chaque workers soit homogènes
-        this->map = this->greedy_cores_packing(assets_volume);
+    // On vérifie si un fichier de paramètres optimisés existe et est non-vide pour chaque symbol.
+    // Si c'est le cas pour tous, la calibration est inutile : les paramètres sont déjà connus
+    // et seront chargés directement dans les modèles par le constructeur de Worker.
+    bool all_params_cached = true;
+    for (const auto& symbol : this->config->symbols) {
+        std::string filename = "optimized_params_" + symbol + ".bin";
+        // ios::ate positionne le curseur en fin de fichier pour lire la taille sans lire le contenu.
+        std::ifstream test(filename, std::ios::binary | std::ios::ate);
+        if (!test.is_open() || test.tellg() == 0) {
+            all_params_cached = false;
+            break;
+        }
+    }
+
+    if (all_params_cached) {
+        std::cout << "Fichiers de paramètres détectés pour tous les symbols. Calibration ignorée." << std::endl;
+        // Sans données de volume (pas de calibration), on distribue les symbols en round-robin
+        // entre les workers pour obtenir une répartition équitable par défaut.
+        for (int i = 0; i < (int)this->config->symbols.size(); i++) {
+            this->map[this->config->symbols[i]] = i % this->n_max_workers;
+        }
         std::cout << this->map.toStyledString() << std::endl;
-    });
-    
-    // On termine la calibration d'initialisation
-    calibrationThread.join();
+    } else {
+        // Lancement de la calibration sur un autre thread pour ne pas bloquer la réception
+        // des données websocket. La calibration mesure le volume de données recu par symbol
+        // afin d'équilibrer la charge entre les workers via greedy_cores_packing.
+        std::thread calibrationThread([this]() {
+            std::cout << "Starting Calibration Engine..." << std::endl;
+            std::vector<volume_symbol> assets_volume = this->calibration.evaluate_assets_volumes(this->config->calibration_time);
+            std::cout << "Fin de la calibration" << std::endl;
+            this->map = this->greedy_cores_packing(assets_volume);
+            std::cout << this->map.toStyledString() << std::endl;
+        });
+        calibrationThread.join();
+    }
 
     // On crée les listes des symbols associé à chaque worker
     std::vector<std::vector<std::string>> temp_worker_map(this->n_max_workers);
@@ -145,7 +165,7 @@ void Scheduler::run() {
         workerParam->symbols_map      = this->config->symbols_map;
         workerParam->assets           = temp_worker_map[i];
         workerParam->n_websockets     = this->clients.size();
-        workerParam->training_duration = this->config->training_time;
+        workerParam->training_duration= this->config->training_time;
         workerParam->worker_id        = i;
 
         // Création de la tâche sur un thread

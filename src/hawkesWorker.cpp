@@ -3,9 +3,81 @@
 
 #include <cmath>
 #include <chrono>
-#include <GLFW/glfw3.h> 
 
 extern "C" void SystemLog(const char* fmt, ...);
+
+// Remplace glfwGetTime() pour mesurer le temps écoulé depuis le démarrage du programme.
+// glfwGetTime() nécessite que GLFW soit initialisé au préalable, ce qui n'est pas garanti
+// dans les threads workers qui démarrent avant l'UI. std::chrono::steady_clock ne dépend
+// d'aucune bibliothèque externe et est sûr à appeler depuis n'importe quel thread.
+static double get_time_sec() {
+    static auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+// Sérialise un std::vector<double> dans un flux binaire : taille puis données brutes.
+// On ne peut pas écrire le vecteur directement avec sizeof() car il contient des pointeurs
+// internes qui seraient invalides à la relecture (bus error ou UB).
+static void write_vector(std::ofstream& f, const std::vector<double>& v) {
+    size_t n = v.size();
+    f.write(reinterpret_cast<const char*>(&n), sizeof(n));
+    f.write(reinterpret_cast<const char*>(v.data()), n * sizeof(double));
+}
+
+// Désérialise un std::vector<double> depuis un flux binaire : lit la taille, redimensionne,
+// puis lit les données brutes. Symétrique de write_vector.
+static void read_vector(std::ifstream& f, std::vector<double>& v) {
+    size_t n = 0;
+    f.read(reinterpret_cast<char*>(&n), sizeof(n));
+    v.resize(n);
+    f.read(reinterpret_cast<char*>(v.data()), n * sizeof(double));
+}
+
+// Sérialise manuellement chaque champ de opt_hawkesParams dans un fichier binaire.
+// opt_hawkesParams contient des std::vector et un std::string dont on ne peut pas
+// écrire la représentation mémoire brute (sizeof) : les objets STL embarquent des
+// pointeurs vers le tas qui deviendraient invalides à la relecture.
+// Format : [status(int)] [sym_len(size_t)] [symbol(chars)] [alpha] [beta] [mu]
+void save_optimized_params(const std::string& filename, const opt_hawkesParams& params) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error opening file for writing: " << filename << std::endl;
+        return;
+    }
+    int status = static_cast<int>(params.status);
+    file.write(reinterpret_cast<const char*>(&status), sizeof(status));
+    size_t sym_len = params.symbol.size();
+    file.write(reinterpret_cast<const char*>(&sym_len), sizeof(sym_len));
+    file.write(params.symbol.data(), sym_len);
+    write_vector(file, params.alpha);
+    write_vector(file, params.beta);
+    write_vector(file, params.mu);
+    file.close();
+    std::cout << "Optimized parameters saved to " << filename << std::endl;
+}
+
+// Désérialise opt_hawkesParams depuis un fichier binaire. Doit rester synchrone avec
+// save_optimized_params : tout changement de format dans l'un invalide les fichiers
+// produits par l'autre.
+void load_optimized_params(const std::string& filename, opt_hawkesParams& params) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Error opening file for reading: " << filename << std::endl;
+        return;
+    }
+    int status = 0;
+    file.read(reinterpret_cast<char*>(&status), sizeof(status));
+    params.status = static_cast<AlgoState>(status);
+    size_t sym_len = 0;
+    file.read(reinterpret_cast<char*>(&sym_len), sizeof(sym_len));
+    params.symbol.resize(sym_len);
+    file.read(params.symbol.data(), sym_len);
+    read_vector(file, params.alpha);
+    read_vector(file, params.beta);
+    read_vector(file, params.mu);
+    file.close();
+    std::cout << "Optimized parameters loaded from " << filename << std::endl;
+}
 
 // --------------------------
 // ---=== WORKER CLASS ===---
@@ -45,6 +117,24 @@ Worker::Worker(
         );
         this->target_symbol_id[symbol] = i;
     }
+    // Si un fichier de paramètres optimisés existe pour un symbol et qu'il est non-vide,
+    // on injecte directement alpha/beta/mu dans le modèle. Cela permet de sauter la phase
+    // de calibration au démarrage du programme quand des paramètres ont déjà été calculés
+    // lors d'une exécution précédente.
+    for (int i = 0; i < this->n_assets; i++) {
+        std::string symbol = this->workerParam->assets[i];
+        std::string filename = "optimized_params_" + symbol + ".bin";
+        // ios::ate positionne le curseur en fin de fichier : tellg() donne directement la taille.
+        std::ifstream test(filename, std::ios::binary | std::ios::ate);
+        if (test.is_open() && test.tellg() > 0) {
+            test.close();
+            opt_hawkesParams params;
+            load_optimized_params(filename, params);
+            this->models[i].alpha = params.alpha;
+            this->models[i].beta  = params.beta;
+            this->models[i].mu    = params.mu;
+        }
+    }
     SystemLog("Initialisation des WORKERS !");
 }
 
@@ -69,7 +159,7 @@ void Worker::run() {
     double rate = 1.0 / 60.0;
     // Convertir en double (en secondes). On a maintenant une grandeur en ~1.77e9
     double T_max = std::chrono::duration<double>(duration_since_epoch).count();
-    double last_time = glfwGetTime();
+    double last_time = get_time_sec();
     while ((now - start) < work_duration) {
         now = std::chrono::steady_clock::now();
 
@@ -112,22 +202,19 @@ void Worker::run() {
                 // Récupère l'indice associé au symbol du paquet recu
                 // afin de trouver le bon modèle associé
                 std::cout << new_params.symbol << std::endl;
-                // for (double & value : new_params.alpha) {
-                //     std::cout << "a="<< value << std::endl;
-                // }
                 int id = this->target_symbol_id.get(new_params.symbol, -1).asInt();
                 // Si le worker ne gère pas le symbol, nous avons alors -1
                 if (id == -1) continue;
-                
-                // std::cout << "G TROUVE UN SYMBOL QUI ME CORRESPOND !" << std::endl;
 
                 // Diffusion des nouveaux paramètres
                 int index = this->target_symbol_id[new_params.symbol].asInt();
                 this->models[index].alpha   = new_params.alpha;
                 this->models[index].beta    = new_params.beta;
                 this->models[index].mu      = new_params.mu;
-                
-                // str_new_params(new_params.alpha, new_params.beta, new_params.mu);
+
+                // Sauvegarde des paramètres optimisés dans un fichier binaire
+                std::string filename = "optimized_params_" + new_params.symbol + ".bin";
+                save_optimized_params(filename, new_params);
             } else if (new_params.status == ERROR) {
                 std::cout << "Erreur d'optimisation pour l'actif : " << new_params.symbol << std::endl;
             }
@@ -140,11 +227,11 @@ void Worker::run() {
 
         now = std::chrono::steady_clock::now();
 
-        // 1. Déterminer à quel moment cette frame DOIT se terminer
+        // Déterminer à quel moment cette frame DOIT se terminer
         double target_time = last_time + rate;
-        double current_time = glfwGetTime();
+        double current_time = get_time_sec();
 
-        // 2. Si on est en avance, on attend
+        // Si on est en avance, on attend
         if (current_time < target_time) {
             double sleep_time = target_time - current_time;
             std::this_thread::sleep_for(std::chrono::duration<double>(sleep_time));
@@ -153,8 +240,8 @@ void Worker::run() {
         // Mettre à jour last_time de manière stable (évite le micro-stuttering)
         last_time += rate; 
         // Note: Si l'application a complètement freezé, on reset pour éviter de rattraper le retard en accéléré
-        if (glfwGetTime() - last_time > 1.0) {
-            last_time = glfwGetTime();
+        if (get_time_sec() - last_time > 1.0) {
+            last_time = get_time_sec();
         }
     }
     std::cout << "Execution terminé! " << this->workerParam->worker_id << std::endl;
@@ -242,7 +329,7 @@ std::vector<double> HawkesModel::compute_virtual_intensities(double current_time
         
         virtual_intensities[i] = std::max(0.0, this->mu[i] + excitation);
     }
-    this->telemetry_manager.update(this->symbol_id, virtual_intensities, glfwGetTime());
+    this->telemetry_manager.update(this->symbol_id, virtual_intensities, get_time_sec());
     return virtual_intensities;
 }
 
@@ -261,19 +348,19 @@ void HawkesModel::update_model(normalized_data data) {
         dt = 0.0; 
     }
 
-    // 3. DECAY (Décroissance de la mémoire)
+    // DECAY (Décroissance de la mémoire)
     int n = this->n_websockets;
     if (dt > 0.0) {
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                int index = coord2index(i, j, n);
+                int index = coord2index(j, i, n);
                 // Utilisation de std::exp (bonne pratique C++)
                 this->phi[index] *= std::exp(-this->beta[index] * dt);
             }
         }
     }
 
-    // 4. CALCUL DE L'INTENSITÉ
+    // CALCUL DE L'INTENSITÉ
     for (int i = 0; i < n; i++) {
         double excitation = 0.0;
         for (int k = i * n; k < (i + 1) * n; k++) {
@@ -282,17 +369,17 @@ void HawkesModel::update_model(normalized_data data) {
         this->intensities[i] = std::max(0.0, this->mu[i] + excitation);
     }
 
-    // 5. JUMP (Excitation suite au nouvel événement)
-    for (int i = 0; i < this->n_websockets; i++) {
+    // JUMP (Excitation suite au nouvel événement)
+    for (int i = 0; i < n; i++) {
         // En C++, il vaut mieux ajouter 1.0 explicite pour les doubles
-        this->phi[coord2index(i, source_idx, this->n_websockets)] += 1.0; 
+        this->phi[coord2index(source_idx, i, n)] += 1.0; 
     }
 
-    // 6. MISE À JOUR DES TEMPS
+    // MISE À JOUR DES TEMPS
     this->last_global_time = now; // Remplace la logique du std::max_element
     this->last_time[source_idx] = now; // Gardé si vous l'utilisez ailleurs
 
-    // 7. BUFFER ET TÉLÉMÉTRIE
+    // BUFFER ET TÉLÉMÉTRIE
     Event event = {data.timestamp, source_idx};
     this->buffer.push_back(event);
     this->n_data++;
@@ -302,6 +389,10 @@ void HawkesModel::update_model(normalized_data data) {
         this->buffer.erase(this->buffer.begin(), this->buffer.begin()+prune_count);
         this->n_data -= prune_count;
     }
+}
+
+void HawkesModel::residuals_analysis(normalized_data data) {
+    
 }
 
 // ------------------------------------

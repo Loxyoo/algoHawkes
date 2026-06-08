@@ -15,6 +15,12 @@ using TimePoint = std::chrono::steady_clock::time_point;
 #include "calibration/hawkes_model/include/optimization.h"
 #include "calibration/hawkes_model/include/struct.h"
 
+// Fonction qui permet la sauvegarde des paramètres optimisés pour les modèles de Hawkes
+void save_optimized_params(const std::string& filename, const opt_hawkesParams& params);
+
+// Fonction qui permet de charger les paramètres optimisés pour les modèles de Hawkes
+void load_optimized_params(const std::string& filename, opt_hawkesParams& params);
+
 class HawkesModel {
     protected:
         int worker_id; // Identifiant du worker
@@ -70,6 +76,18 @@ class HawkesModel {
          * @param data : Donnée recu qui a été normalisé
          */
         void update_model(normalized_data data);
+
+        /**
+         * @brief Analyse des résidus pour évaluer la qualité de l'ajustement du modèle de Hawkes aux données observées.
+         * 
+         * Cette méthode permet d'examiner les résidus (différences entre les intensités prédites par le modèle et 
+         * les événements observés) pour identifier les éventuelles lacunes du modèle, détecter des patterns non capturés,
+         * et évaluer la pertinence des paramètres optimisés. L'analyse des résidus est essentielle pour valider la performance 
+         * du modèle de Hawkes et guider d'éventuelles améliorations. Lorsque les résidus dérivent significativement de zéro, 
+         * cela peut indiquer que le modèle ne capture pas correctement la dynamique des événements, suggérant ainsi la nécessité 
+         * d'un rajustement des paramètres ou d'envisager des extensions du modèle.
+         */
+        void residuals_analysis(normalized_data data);
 };
 
 class Worker {

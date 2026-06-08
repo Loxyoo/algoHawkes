@@ -94,7 +94,9 @@ public:
 
 };
 
-
+/**
+ * @brief TelemetryManager est une classe qui gère les données de télémétrie partagées entre les workers et l'interface utilisateur.
+ */
 class TelemetryManager {
     public:
         std::vector<bool> symbols_to_look_at;

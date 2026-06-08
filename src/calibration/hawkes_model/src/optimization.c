@@ -6,11 +6,7 @@
 #include <string.h> // Pour memcpy
 #include "../include/optimization.h"
 
-
-
-
 // --- 2. GESTION MEMOIRE & INIT ---
-
 SimplexPoint* init_simplexpoint(int n_params) {
     SimplexPoint* p = malloc(sizeof(SimplexPoint));
     p->values = calloc(n_params, sizeof(double));
@@ -147,6 +143,7 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
         //printf("a:%lf b:%lf \n", a, b);
     }
 
+    // C'est aussi log_sum - compensateur
     return log_sum - integral; // On retourne LL (Maximisation)
 }
 
