@@ -106,8 +106,14 @@ class TelemetryManager {
             std::string symbol;
         };
 
+        struct ResidualsSnapshot {
+            std::vector<std::vector<double>> residuals_by_source; // un vecteur par source (source_idx)
+            std::string symbol;
+        };
+
     private:
         std::vector<Snapshot> live_data;
+        std::vector<ResidualsSnapshot> residuals_data;
         std::vector<std::string> symbols;
         std::vector<std::unique_ptr<std::shared_mutex>> mutexes;
 
@@ -115,6 +121,7 @@ class TelemetryManager {
         TelemetryManager(const std::vector<std::string>& syms) : symbols(syms) {
             size_t n = syms.size();
             live_data.resize(n);
+            residuals_data.resize(n);
             symbols_to_look_at.resize(n, false);
             mutexes.reserve(n);
             for (size_t i = 0; i < n; ++i)
@@ -129,11 +136,33 @@ class TelemetryManager {
             live_data[symbol_index].symbol      = symbols[symbol_index];
         }
 
+        // Appelé par les workers — ajoute un résidu dans le bucket de la source concernée
+        void update_residuals_analysis(int symbol_index, int source_idx, double residual) {
+            if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return;
+            if (residual <= 0.0) return;
+            std::unique_lock lock(*mutexes[symbol_index]);
+            auto& sources = residuals_data[symbol_index].residuals_by_source;
+            if (source_idx >= (int)sources.size())
+                sources.resize(source_idx + 1);
+            auto& vec = sources[source_idx];
+            vec.push_back(residual);
+            // Élagage peu fréquent : ne se déclenche que tous les MAX_RESIDUALS points
+            static const size_t MAX_RESIDUALS = 5000;
+            if (vec.size() > 2 * MAX_RESIDUALS)
+                vec.erase(vec.begin(), vec.begin() + (int)(vec.size() - MAX_RESIDUALS));
+        }
+
         // Appelé par l'UI — lit le dernier snapshot sans le consommer
         Snapshot get_snapshot(int symbol_index) const {
             if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return {};
             std::shared_lock lock(*mutexes[symbol_index]);
             return live_data[symbol_index];
+        }
+
+        ResidualsSnapshot get_residuals_snapshot(int symbol_index) const {
+            if (symbol_index < 0 || symbol_index >= (int)residuals_data.size()) return {};
+            std::shared_lock lock(*mutexes[symbol_index]);
+            return residuals_data[symbol_index];
         }
 
         size_t symbol_count() const { return symbols.size(); }

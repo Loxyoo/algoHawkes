@@ -46,6 +46,7 @@ typedef struct {
     double* alpha;      // Matrice D*D
     double* beta;       // Matrice D*D
     double* mu;         // Vecteur D
+    double* phi;        // Vecteur D ajusté pour le calcul de l'intensité et du compensateur
 } ModelParams;
 
 typedef struct {

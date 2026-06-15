@@ -347,9 +347,10 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
 
     ModelParams* global_model = malloc(sizeof(ModelParams));
     global_model->n_dim = N_WS;
-    global_model->mu = malloc(N_WS * sizeof(double));
+    global_model->mu    = malloc(N_WS * sizeof(double));
     global_model->alpha = malloc(N_WS * N_WS * sizeof(double)); // Matrice aplatie
     global_model->beta  = malloc(N_WS * N_WS * sizeof(double)); // Matrice aplatie
+    global_model->phi   = calloc(N_WS * N_WS, sizeof(double)); // Vecteur pour le calcul de l'intensité et du compensateur
 
     // Buffer réutilisable pour éviter malloc dans la boucle
     LL_params* ll_params = init_ll_params(); 
@@ -377,11 +378,12 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
         free_simplexpoint(res);
     }
 
-    // // Affichage des nouveaux paramètres
-    // printf("[C] : Paramètres \n");
-    // display_vector(global_model->alpha, N_DIM*N_DIM, "ALPHA VALUES");
-    // display_vector(global_model->beta, N_DIM*N_DIM, "BETA VALUES");
-    // display_vector(global_model->mu, N_DIM, "MU VALUES");
+    for (int k = 0; k < history->total_events; k++) {
+        int src = history->events[k].type;
+        for (int i = 0; i < N_WS; i++) {
+            global_model->phi[src * N_WS + i] += exp(-global_model->beta[i * N_WS + src] * (history->T_max - history->events[k].time));
+        }
+    }
     
     free_ll_params(ll_params);
     return global_model;

@@ -88,6 +88,7 @@ typedef struct {
     std::vector<double> alpha; // Les paramètres de forces
     std::vector<double> beta; // Les paramètres d'oublis
     std::vector<double> mu; // Les intensités de fond
+    std::vector<double> phi; // Nouveau phi ajuster avec les nouveaux paramètres pour calculer l'intensité et le compensateur de Hawkes.
 } opt_hawkesParams;
 
 #endif // STRUCT_H

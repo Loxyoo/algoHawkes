@@ -52,6 +52,7 @@ void save_optimized_params(const std::string& filename, const opt_hawkesParams& 
     write_vector(file, params.alpha);
     write_vector(file, params.beta);
     write_vector(file, params.mu);
+    write_vector(file, params.phi);
     file.close();
     std::cout << "Optimized parameters saved to " << filename << std::endl;
 }
@@ -75,6 +76,7 @@ void load_optimized_params(const std::string& filename, opt_hawkesParams& params
     read_vector(file, params.alpha);
     read_vector(file, params.beta);
     read_vector(file, params.mu);
+    read_vector(file, params.phi);
     file.close();
     std::cout << "Optimized parameters loaded from " << filename << std::endl;
 }
@@ -133,6 +135,7 @@ Worker::Worker(
             this->models[i].alpha = params.alpha;
             this->models[i].beta  = params.beta;
             this->models[i].mu    = params.mu;
+            this->models[i].phi   = params.phi;
         }
     }
     SystemLog("Initialisation des WORKERS !");
@@ -167,7 +170,8 @@ void Worker::run() {
         normalized_data data;
         if (inqueue.try_pop(data)) {
             int index = this->target_symbol_id[data.symbol].asInt();
-            this->models[index].update_model(data);
+            this->models[index].residuals_analysis(data); // Analyse résiduelle avant le saut (phi pré-jump, dt correct)
+            this->models[index].update_model(data); // Mise à jour des intensités en temps réel
         }
         // Toutes les OPTIM_INTERVAL secondes, on optimise les paramètres
         if ((now - last_optim_time) >= OPTIM_INTERVAL) {
@@ -211,6 +215,7 @@ void Worker::run() {
                 this->models[index].alpha   = new_params.alpha;
                 this->models[index].beta    = new_params.beta;
                 this->models[index].mu      = new_params.mu;
+                this->models[index].phi     = new_params.phi;
 
                 // Sauvegarde des paramètres optimisés dans un fichier binaire
                 std::string filename = "optimized_params_" + new_params.symbol + ".bin";
@@ -283,9 +288,9 @@ HawkesModel::HawkesModel(
     // pour des raisons d'optimisation mémoire.
     this->alpha.assign(x, 0.0);
     this->beta.assign(x, 0.0);
-
-    // INITIALISATION DES VARIABLES POUR L'ARCHITECTURE FPGA
     this->phi.assign(x, 0.0);
+
+    this->compensator.assign(this->n_websockets, 0.0);
 }
 
 // METHODS
@@ -337,10 +342,7 @@ std::vector<double> HawkesModel::compute_virtual_intensities(double current_time
 void HawkesModel::update_model(normalized_data data) {
     std::string exchange = data.exchange;
     int source_idx = this->websocket_map[exchange].asInt();
-    
     double now = data.timestamp;
-
-    // Remplacez votre std::max_element par une variable de classe "this->last_global_time"
     double dt = now - this->last_global_time;
     
     // Protection HFT : les paquets UDP/Websockets peuvent arriver dans le désordre
@@ -392,7 +394,42 @@ void HawkesModel::update_model(normalized_data data) {
 }
 
 void HawkesModel::residuals_analysis(normalized_data data) {
+    std::string exchange = data.exchange;
+    int source_idx = this->websocket_map[exchange].asInt();
     
+    double now = data.timestamp;
+
+    // Remplacez votre std::max_element par une variable de classe "this->last_global_time"
+    double dt = now - this->last_global_time;
+    
+    // Protection HFT : les paquets UDP/Websockets peuvent arriver dans le désordre
+    if (dt < 0.0) {
+        dt = 0.0; 
+    }
+
+    double diff_compensator = this->mu[source_idx] * dt;
+    for (int j = 0; j < this->n_websockets; j++) {
+        double alpha_ji = this->alpha[coord2index(j, source_idx, this->n_websockets)];
+        double beta_ji = this->beta[coord2index(j, source_idx, this->n_websockets)];
+        double phi_ij = this->phi[coord2index(source_idx, j, this->n_websockets)];
+        // Limite de L'Hôpital quand beta -> 0 : (alpha/beta)*(1-exp(-beta*dt)) -> alpha*dt
+        // On utilise cette forme pour éviter les divisions par zéro lorsque beta est très petit.
+        if (std::abs(beta_ji) < 1e-12) {
+            diff_compensator += alpha_ji * dt * phi_ij;
+        } else {
+            diff_compensator += (alpha_ji / beta_ji) * (1.0 - std::exp(-beta_ji * dt)) * phi_ij;
+        }
+    }
+    this->compensator[source_idx] += diff_compensator;
+
+    // Mise à jour de l'exponentially weighted moving average (EWMA) des résidus
+
+    // N'envoie les résidus à la télémétrie qu'après calibration (au moins un β > 0)
+    bool calibrated = std::any_of(this->beta.begin(), this->beta.end(),
+                                  [](double b){ return b > 1e-10; });
+    if (calibrated && diff_compensator > 0.0) {
+        this->telemetry_manager.update_residuals_analysis(this->symbol_id, source_idx, diff_compensator);
+    }
 }
 
 // ------------------------------------
@@ -443,6 +480,7 @@ void HawkesOptimizer::run() {
             formated_output_params.alpha.assign(params->alpha, params->alpha + n_matrix_elements);
             formated_output_params.beta.assign(params->beta, params->beta + n_matrix_elements);
             formated_output_params.mu.assign(params->mu, params->mu + this->n_websockets);
+            formated_output_params.phi.assign(params->phi, params->phi + n_matrix_elements);
             // Pour le moment le status est OK, mais voir pour d'autre conditions pour envoyer des cas d'erreur ou de problème.
             formated_output_params.status = OK;
             formated_output_params.symbol = history.symbol; // Associe le symbol du modèle

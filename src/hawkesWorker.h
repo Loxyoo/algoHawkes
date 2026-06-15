@@ -44,6 +44,10 @@ class HawkesModel {
         std::vector<double> mu; // Intensités de fonf pour chaques websockets
         
         std::vector<double> phi; // Variable pour l'ARCHITECTURE FPGA
+        std::vector<double> compensator; // Variable pour stocker le compensateur de Hawkes pour l'analyse résiduelle
+
+        double ewma_alpha = 0.2; // Paramètre pour l'Exponential Weighted Moving Average (EWMA) pour le calcul des intensités
+        double ewma_residuals = 0.0; // Variable pour stocker la moyenne mobile exponentielle des résidus, utilisée pour l'analyse de la qualité du modèle
         
         std::vector<Event> buffer; // Buffer qui enregistre les events, i.e. les timestamps de chaque nouvelle données du symbol gérès par ce model.
 
@@ -88,6 +92,16 @@ class HawkesModel {
          * d'un rajustement des paramètres ou d'envisager des extensions du modèle.
          */
         void residuals_analysis(normalized_data data);
+};
+
+// Classe qui permet de gérer les métriques d'un asset. Comme les variations de prix, les volumes, les intensités de Hawkes, etc. Elle est utilisée pour monitorer la santé du marché et détecter des anomalies.
+class AssetMetrics {
+    protected:
+        std::string asset; // Nom de l'asset
+        double time_window; // Fenêtre de temps pour le calcul des métriques
+        std::vector<double> price_history; // Historique des prix pour le calcul de la
+        double variation; // Variation du prix sur la fenêtre de temps
+    
 };
 
 class Worker {

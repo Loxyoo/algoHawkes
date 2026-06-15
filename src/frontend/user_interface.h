@@ -125,8 +125,17 @@ class UserInterface {
     public:
         UserInterface(SchedulerConfig& config, TelemetryManager& telemetry_manager);
 
+        void ApplyBloombergStyle();
+
+        void LoadTerminalFont();
+
+        void ApplyPlotStyle();
+
         /// Crée la fenêtre GLFW et configure le contexte OpenGL. Retourne 0 si succès, 1 en cas d'erreur.
         int initialize();
+
+        /// Affiche la top bar avec le nom du modèle et l'horloge temps réel (coin droit). Un bouton kill switch est prévu pour arrêter le scheduler. Les websockets actifs et un déroulé pour sélectionner un symbole sont également affichés.
+        void render_main_bar();
 
         /// Appelée chaque frame pour appliquer les mises à jour de modèles déclenchées par l'UI.
         void update_hawkes_models();
@@ -160,6 +169,8 @@ class UserInterface {
 
         /// Boucle de mise à jour de tous les modèles (appelée depuis le thread principal).
         void main_updater();
+
+        void render_branching_matrix();
 
         /**
          * Lance la boucle de rendu principale (ImGui + OpenGL).

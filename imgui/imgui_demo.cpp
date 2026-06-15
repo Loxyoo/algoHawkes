@@ -9411,6 +9411,19 @@ struct ExampleAppLog
     }
 };
 
+ExampleAppLog app_log;
+
+extern "C" void SystemLog(const char * fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int old_size = app_log.Buf.size();
+    app_log.Buf.appendfv(fmt, args);
+    for (int new_size = app_log.Buf.size(); old_size < new_size; old_size++) {
+        if (app_log.Buf[old_size] == '\n') app_log.LineOffsets.push_back(old_size + 1);
+    }
+    va_end(args);
+}
+
 // Demonstrate creating a simple log window with basic filtering.
 static void ShowExampleAppLog(bool* p_open)
 {

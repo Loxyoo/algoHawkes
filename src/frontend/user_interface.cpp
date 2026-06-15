@@ -16,6 +16,109 @@ UserInterface::UserInterface(SchedulerConfig& config, TelemetryManager& telemetr
     this->is_symbol_selected[config.symbols_map[DefaultParameters::default_symbol].asInt()] = true;
 }
 
+void UserInterface::ApplyBloombergStyle() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // ---- Palette de base (ambre Bloomberg sur fond noir) ----
+    const ImVec4 BG_DEEP    = ImVec4(0.00f, 0.00f, 0.00f, 1.00f); // noir
+    const ImVec4 BG_PANEL   = ImVec4(0.05f, 0.06f, 0.08f, 1.00f); // panneaux
+    const ImVec4 BG_HOVER   = ImVec4(0.10f, 0.12f, 0.16f, 1.00f);
+    const ImVec4 BORDER     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f); // blanc
+    const ImVec4 AMBER      = ImVec4(1.00f, 0.65f, 0.00f, 1.00f); // ambre signature
+    const ImVec4 AMBER_DIM  = ImVec4(0.80f, 0.52f, 0.00f, 1.00f);
+    const ImVec4 TEXT_MAIN  = ImVec4(0.78f, 0.85f, 0.91f, 1.00f); // gris clair
+    const ImVec4 TEXT_DIM   = ImVec4(0.45f, 0.50f, 0.58f, 1.00f);
+    const ImVec4 GREEN      = ImVec4(0.30f, 0.80f, 0.31f, 1.00f); // up / ok
+    const ImVec4 RED        = ImVec4(0.89f, 0.29f, 0.29f, 1.00f); // down / err
+
+    colors[ImGuiCol_Text]                 = TEXT_MAIN;
+    colors[ImGuiCol_TextDisabled]         = TEXT_DIM;
+    colors[ImGuiCol_WindowBg]             = BG_DEEP;
+    colors[ImGuiCol_ChildBg]              = BG_PANEL;
+    colors[ImGuiCol_PopupBg]              = BG_PANEL;
+    colors[ImGuiCol_Border]               = BORDER;
+    colors[ImGuiCol_BorderShadow]         = ImVec4(0,0,0,0);
+    colors[ImGuiCol_FrameBg]              = BG_PANEL;
+    colors[ImGuiCol_FrameBgHovered]       = BG_HOVER;
+    colors[ImGuiCol_FrameBgActive]        = BG_HOVER;
+    colors[ImGuiCol_TitleBg]              = ImVec4(0.04f,0.08f,0.13f,1.00f);
+    colors[ImGuiCol_TitleBgActive]        = ImVec4(0.07f,0.14f,0.23f,1.00f);
+    colors[ImGuiCol_TitleBgCollapsed]     = BG_DEEP;
+    colors[ImGuiCol_MenuBarBg]            = ImVec4(0.04f,0.08f,0.13f,1.00f);
+    colors[ImGuiCol_ScrollbarBg]          = BG_DEEP;
+    colors[ImGuiCol_ScrollbarGrab]        = BORDER;
+    colors[ImGuiCol_ScrollbarGrabHovered] = AMBER_DIM;
+    colors[ImGuiCol_ScrollbarGrabActive]  = AMBER;
+    colors[ImGuiCol_CheckMark]            = AMBER;
+    colors[ImGuiCol_SliderGrab]           = AMBER_DIM;
+    colors[ImGuiCol_SliderGrabActive]     = AMBER;
+    colors[ImGuiCol_Button]               = BG_PANEL;
+    colors[ImGuiCol_ButtonHovered]        = BG_HOVER;
+    colors[ImGuiCol_ButtonActive]         = ImVec4(0.20f,0.13f,0.00f,1.00f);
+    colors[ImGuiCol_Header]               = ImVec4(0.07f,0.14f,0.23f,1.00f);
+    colors[ImGuiCol_HeaderHovered]        = BG_HOVER;
+    colors[ImGuiCol_HeaderActive]         = ImVec4(0.10f,0.20f,0.32f,1.00f);
+    colors[ImGuiCol_Separator]            = BORDER;
+    colors[ImGuiCol_SeparatorHovered]     = AMBER_DIM;
+    colors[ImGuiCol_SeparatorActive]      = AMBER;
+    colors[ImGuiCol_ResizeGrip]           = BORDER;
+    colors[ImGuiCol_ResizeGripHovered]    = AMBER_DIM;
+    colors[ImGuiCol_ResizeGripActive]     = AMBER;
+    colors[ImGuiCol_Tab]                  = ImVec4(0.04f,0.08f,0.13f,1.00f);
+    colors[ImGuiCol_TabHovered]           = BG_HOVER;
+    colors[ImGuiCol_TabActive]            = ImVec4(0.07f,0.14f,0.23f,1.00f);
+    colors[ImGuiCol_TabUnfocused]         = BG_DEEP;
+    colors[ImGuiCol_TabUnfocusedActive]   = BG_PANEL;
+    colors[ImGuiCol_PlotLines]            = AMBER;
+    colors[ImGuiCol_PlotLinesHovered]     = ImVec4(1.00f,0.80f,0.30f,1.00f);
+    colors[ImGuiCol_PlotHistogram]        = AMBER;
+    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f,0.80f,0.30f,1.00f);
+    colors[ImGuiCol_TableHeaderBg]        = ImVec4(0.07f,0.14f,0.23f,1.00f);
+    colors[ImGuiCol_TableBorderStrong]    = BORDER;
+    colors[ImGuiCol_TableBorderLight]     = ImVec4(0.08f,0.12f,0.18f,1.00f);
+    colors[ImGuiCol_TableRowBg]           = BG_DEEP;
+    colors[ImGuiCol_TableRowBgAlt]        = ImVec4(0.04f,0.05f,0.07f,1.00f);
+    colors[ImGuiCol_TextSelectedBg]       = ImVec4(0.20f,0.13f,0.00f,0.60f);
+    colors[ImGuiCol_NavHighlight]         = AMBER;
+
+    // ---- Géométrie : angles nets, style terminal ----
+    style.WindowRounding    = 0.0f;
+    style.ChildRounding     = 0.0f;
+    style.FrameRounding     = 0.0f;
+    style.PopupRounding     = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.GrabRounding      = 0.0f;
+    style.TabRounding       = 0.0f;
+    style.WindowBorderSize  = 1.0f;
+    style.FrameBorderSize   = 1.0f;
+    style.ChildBorderSize   = 1.0f;
+    style.WindowPadding     = ImVec2(6, 6);
+    style.FramePadding      = ImVec2(5, 3);
+    style.ItemSpacing       = ImVec2(6, 4);
+    style.ItemInnerSpacing  = ImVec2(4, 4);
+    style.ScrollbarSize     = 12.0f;
+}
+
+void UserInterface::LoadTerminalFont() {
+    ImGuiIO& io = ImGui::GetIO();
+    // Police monospace — adapte le chemin à ton projet.
+    // JetBrains Mono, Roboto Mono, Consolas ou IBM Plex Mono conviennent.
+    io.Fonts->AddFontFromFileTTF("src/frontend/fonts/JetBrains_Mono/JetBrainsMono-VariableFont_wght.ttf", 15.0f);
+    // Ne pas appeler io.Fonts->Build() ici : le backend OpenGL le fait automatiquement à l'init.
+}
+
+void UserInterface::ApplyPlotStyle() {
+    ImPlotStyle& ps = ImPlot::GetStyle();
+    ps.Colors[ImPlotCol_FrameBg]  = ImVec4(0.02f,0.02f,0.03f,1.00f);
+    ps.Colors[ImPlotCol_PlotBg]   = ImVec4(0.03f,0.04f,0.06f,1.00f);
+    ps.Colors[ImPlotCol_PlotBorder] = ImVec4(1.00f,1.00f,1.00f,1.00f); // blanc
+    ps.Colors[ImPlotCol_AxisGrid] = ImVec4(0.10f,0.15f,0.22f,1.00f);
+    ps.Colors[ImPlotCol_AxisText] = ImVec4(0.45f,0.50f,0.58f,1.00f);
+    ps.PlotPadding = ImVec2(8,8);
+    ps.LineWeight  = 1.2f;
+}
+
 int UserInterface::initialize() {
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) return 1;
@@ -46,6 +149,38 @@ int UserInterface::initialize() {
     glfwSwapInterval(0); // VSync désactivé — le framerate est géré manuellement via busy-wait
 
     return 0;
+}
+
+void UserInterface::render_main_bar() {
+    if (ImGui::BeginMainMenuBar()) {
+        // Affiche le nom du modèle sélectionné
+        // Ajout d'un petit cadre autour du nom du modèle pour le mettre en évidence
+        ImGui::Text("Multivariate Hawkes Model");
+        ImGui::SameLine();
+
+        // Déroulé pour sélectionner un symbole parmi ceux disponibles
+        if (ImGui::BeginMenu("Symbols")) {
+            for (size_t i = 0; i < config.symbols.size(); ++i) {
+                const std::string& symbol = config.symbols[i];
+                bool is_selected = is_symbol_selected[i];
+                if (ImGui::MenuItem(symbol.c_str(), NULL, is_selected)) {
+                    // Inverse l'état de sélection du symbole
+                    is_symbol_selected[i] = !is_symbol_selected[i];
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::SameLine();
+        // Affiche les websockets actifs
+        for (const std::string&ws : config.websocket_map.getMemberNames()) {
+            ImGui::Text("%s ", ws.c_str());
+            ImGui::SameLine();
+        }
+
+        ImGui::EndMainMenuBar();
+
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +265,9 @@ struct ExampleAppLog
                 LineOffsets.push_back(old_size + 1);
     }
 
+    /// @brief 
+    /// @param title 
+    /// @param p_open 
     void Draw(const char* title, bool* p_open = NULL)
     {
         if (!ImGui::Begin(title, p_open))
@@ -428,36 +566,135 @@ void UserInterface::render_scrolling_buffer() {
 }
 
 // ---------------------------------------------------------------------------
-// QQ Plot — diagnostic de calibration (données synthétiques provisoires)
+// QQ Plot — résidus du compensateur de Hawkes vs Exp(1) théorique
 // ---------------------------------------------------------------------------
 void UserInterface::render_qq_plot() {
-    ImGui::Begin("QQ Plot");
+    ImGui::Begin("QQ Plot — Résidus Hawkes");
 
-    // TODO: remplacer ces données synthétiques par les résidus du modèle Hawkes calibré
-    srand(0);
-    static float xs1[100], ys1[100];
-    for (int i = 0; i < 100; ++i) {
-        xs1[i] = i * 0.01f;
-        ys1[i] = xs1[i] + 0.1f * ((float)rand() / (float)RAND_MAX);
+    // Sélecteur de symbole
+    static int selected_symbol = 0;
+    {
+        std::vector<const char*> labels;
+        for (auto& s : config.symbols) labels.push_back(s.c_str());
+        ImGui::SetNextItemWidth(150);
+        ImGui::Combo("Symbole##qq", &selected_symbol, labels.data(), (int)labels.size());
     }
-    static float xs2[50], ys2[50];
-    for (int i = 0; i < 50; i++) {
-        xs2[i] = 0.25f + 0.2f * ((float)rand() / (float)RAND_MAX);
-        ys2[i] = 0.75f + 0.2f * ((float)rand() / (float)RAND_MAX);
+    if (selected_symbol >= (int)config.symbols.size()) selected_symbol = 0;
+
+    auto snap = telemetry_manager.get_residuals_snapshot(selected_symbol);
+    int n_sources = (int)snap.residuals_by_source.size();
+
+    // Compte total de résidus pour l'affichage
+    int total_residuals = 0;
+    for (auto& v : snap.residuals_by_source) total_residuals += (int)v.size();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d résidus)", total_residuals);
+
+    if (n_sources == 0) {
+        ImGui::TextDisabled("En attente de résidus calibrés...");
+        ImGui::End();
+        return;
     }
 
-    if (ImPlot::BeginPlot("Scatter Plot")) {
-        ImPlot::PlotScatter("Data 1", xs1, ys1, 100);
-        ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-        ImPlot::SetNextMarkerStyle(ImPlotMarker_Square, 6,
-                                   ImPlot::GetColormapColor(1), IMPLOT_AUTO,
-                                   ImPlot::GetColormapColor(1));
-        ImPlot::PlotScatter("Data 2", xs2, ys2, 50);
-        ImPlot::PopStyleVar();
+    // Calcule les QQ points par source et le max global pour la droite de référence
+    static const int N_MAX = 2000;
+    struct SourceQQ { std::vector<float> xs, ys; };
+    std::vector<SourceQQ> per_source(n_sources);
+    float axis_max = 0.0f;
+
+    for (int src = 0; src < n_sources; src++) {
+        const auto& raw = snap.residuals_by_source[src];
+        if (raw.size() < 2) continue;
+
+        std::vector<double> sample;
+        if ((int)raw.size() > N_MAX)
+            sample.assign(raw.end() - N_MAX, raw.end());
+        else
+            sample = raw;
+
+        int m = (int)sample.size();
+        std::sort(sample.begin(), sample.end());
+
+        // Quantiles théoriques Exp(1) : Q(p) = -ln(1-p), avec p_i = (i+0.5)/m (formule de Hazen)
+        per_source[src].xs.resize(m);
+        per_source[src].ys.resize(m);
+        for (int i = 0; i < m; i++) {
+            double p = (i + 0.5) / (double)m;
+            per_source[src].xs[i] = (float)(-std::log(1.0 - p));
+            per_source[src].ys[i] = (float)sample[i];
+        }
+        axis_max = std::max(axis_max,
+                            std::max(per_source[src].xs[m - 1], per_source[src].ys[m - 1]));
+    }
+
+    if (axis_max == 0.0f) {
+        ImGui::TextDisabled("En attente de résidus calibrés...");
+        ImGui::End();
+        return;
+    }
+
+    axis_max *= 1.1f;
+    float ref_xs[2] = {0.0f, axis_max};
+    float ref_ys[2] = {0.0f, axis_max};
+
+    if (ImPlot::BeginPlot("##QQPlot", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes("Quantiles théoriques Exp(1)", "Quantiles empiriques",
+                          ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+
+        // Droite de référence y = x (modèle parfait)
+        ImPlot::SetNextLineStyle(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), 1.5f);
+        ImPlot::PlotLine("Exp(1) théorique", ref_xs, ref_ys, 2);
+
+        // Une série par source avec la couleur du colormap ImPlot (cohérent avec le graphique des intensités)
+        for (int src = 0; src < n_sources; src++) {
+            auto& qq = per_source[src];
+            if (qq.xs.empty()) continue;
+            // websockets[0] = "All", donc source 0 → websockets[1]
+            const char* ws_name = DefaultParameters::websockets[src + 1];
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f,
+                                       ImPlot::GetColormapColor(src), 0.7f,
+                                       ImPlot::GetColormapColor(src));
+            ImPlot::PlotScatter(ws_name, qq.xs.data(), qq.ys.data(), (int)qq.xs.size());
+        }
+
         ImPlot::EndPlot();
     }
 
     ImGui::End();
+}
+
+void UserInterface::render_branching_matrix() {
+    if (ImGui::Begin("Branching Matrix")) {
+
+        std::vector<std::string> members = config.websocket_map.getMemberNames();
+        int n = (int)members.size();
+
+        if (ImGui::BeginTable("BranchingMatrix", n+1)) {
+            // Affiche les en-têtes de colonnes
+            ImGui::TableSetupColumn(""); // La case en haut à gauche reste vide
+            for (int col = 0; col < n; ++col) {
+                ImGui::TableSetupColumn(members[col].c_str());
+            }
+            ImGui::TableHeadersRow(); // Affiche la première ligne d'en-têtes
+            // Affiche les en-têtes de lignes
+            for (int row = 0; row < n; ++row) {
+                ImGui::TableNextRow();
+
+                ImGui::TableNextColumn();
+                ImU32 header_bg_color = ImGui::GetColorU32(ImGuiCol_TableHeaderBg);
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, header_bg_color);
+                // On peut mettre le texte en gras ou changer sa couleur ici si on le souhaite
+                ImGui::Text("%s", members[row].c_str());
+                
+                for (int col = 0; col < n; ++col) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("NaN");
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::End();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +716,10 @@ int UserInterface::main_renderer() {
     #else
     const char* glsl_version = "#version 130";
     #endif
+
+    ApplyBloombergStyle();
+    ApplyPlotStyle();
+    LoadTerminalFont();
 
     ImGui_ImplGlfw_InitForOpenGL(this->window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -504,10 +745,14 @@ int UserInterface::main_renderer() {
 
         if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
 
+        render_main_bar();
+        render_branching_matrix();
+
         update_hawkes_models();
         render_log_panel();
         render_control_panel();
         render_scrolling_buffer();
+        render_qq_plot();
 
         // Rendu OpenGL
         ImGui::Render();
