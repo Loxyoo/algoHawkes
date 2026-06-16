@@ -40,11 +40,11 @@ int main(int, char**)
     ThreadSafeQueue<opt_hawkesParams> opt_output_queue;
 
     // Instanciation des clients websocket pour chaque exchange, et redirection de leur sortie vers la queue partagée
-    auto binanceWS = std::make_unique<BinanceWS>(symbols, 3, shared_queue);
+    auto binanceWS  = std::make_unique<BinanceWS>(symbols, 3, shared_queue);
     auto coinbaseWS = std::make_unique<CoinbaseWS>(symbols, 3, shared_queue);
-    auto krakenWS = std::make_unique<KrakenWS>(symbols, 3, shared_queue);
-    auto okxWS = std::make_unique<OkxWS>(symbols, 3, shared_queue);
-    auto bybitWS = std::make_unique<BybitWS>(symbols, 3, shared_queue);
+    auto krakenWS   = std::make_unique<KrakenWS>(symbols, 3, shared_queue);
+    auto okxWS      = std::make_unique<OkxWS>(symbols, 3, shared_queue);
+    auto bybitWS    = std::make_unique<BybitWS>(symbols, 3, shared_queue);
 
     int calibration_duration = 10; // durée de la phase de calibration en secondes
     int training_duration = 120; // durée de la phase d'entrainement en secondes
@@ -64,6 +64,7 @@ int main(int, char**)
     websocket_map["Kraken"] = 2;
     websocket_map["OKX"] = 3;
     websocket_map["Bybit"] = 4;
+
     int max_workers = 5; // On définit le nombre maximum de workers HPC qui pourront être utilisés pour l'optimisation, en fonction du nombre de cores disponibles et de la charge de travail estimée. Ce paramètre peut être ajusté en fonction des besoins et des ressources du système.
     Json::Value worker_mapping; // Cette variable contient la répartition des symbols entre les différents workers. Elle est généré dynamiquement par le scheduler pendant la phase de calibration, en fonction du volume de données reçu pour chaque symbol et de la charge de travail associée.
 
@@ -73,7 +74,8 @@ int main(int, char**)
         symbols_map[symbols[i]] = i;
     }
     // On regroupe tous les paramètres de configuration du scheduler dans une structure pour faciliter leur passage entre les différentes parties du système.
-    SchedulerConfig *schelConfig = new SchedulerConfig(); 
+    SchedulerConfig *schelConfig = new SchedulerConfig();
+     
     schelConfig->calibration_time = calibration_duration;
     schelConfig->training_time = training_duration;
     schelConfig->n_max_workers = max_workers;

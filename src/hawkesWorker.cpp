@@ -136,6 +136,8 @@ Worker::Worker(
             this->models[i].beta  = params.beta;
             this->models[i].mu    = params.mu;
             this->models[i].phi   = params.phi;
+            // On met à jour le snapshot des paramètres optimisés dans le TelemetryManager pour que l'UI puisse les afficher dès le démarrage.
+            this->models[i].update_hawkes_params(params);
         }
     }
     SystemLog("Initialisation des WORKERS !");
@@ -217,6 +219,8 @@ void Worker::run() {
                 this->models[index].mu      = new_params.mu;
                 this->models[index].phi     = new_params.phi;
 
+                // Envoie des nouveaux paramètres optimisés à l'UI pour affichage
+                this->models[index].update_hawkes_params(new_params);
                 // Sauvegarde des paramètres optimisés dans un fichier binaire
                 std::string filename = "optimized_params_" + new_params.symbol + ".bin";
                 save_optimized_params(filename, new_params);
@@ -291,10 +295,11 @@ HawkesModel::HawkesModel(
     this->phi.assign(x, 0.0);
 
     this->compensator.assign(this->n_websockets, 0.0);
+
+    this->branching_matrix.assign(x, 0.0); // Initialisation de la matrice de branchement à zéro
 }
 
 // METHODS
-
 /**
  * @brief Convertie une coordonnée d'une matrice carré en un indice
  * 
@@ -430,6 +435,23 @@ void HawkesModel::residuals_analysis(normalized_data data) {
     if (calibrated && diff_compensator > 0.0) {
         this->telemetry_manager.update_residuals_analysis(this->symbol_id, source_idx, diff_compensator);
     }
+}
+
+void HawkesModel::update_hawkes_params(const opt_hawkesParams& new_params) {
+    int size_alpha = this->alpha.size();
+    int size_beta = this->beta.size();
+    if (size_alpha != size_beta) {
+        std::cerr << "Error: alpha and beta vectors must have the same size." << std::endl;
+        return;
+    }
+    for (int i = 0; i < size_alpha; ++i) {
+        if (this->beta[i] > 1e-12) { // Avoid division by zero
+            this->branching_matrix[i] = this->alpha[i] / this->beta[i];
+        } else {
+            this->branching_matrix[i] = -1.0; 
+        }
+    }
+    this->telemetry_manager.update_parameters_snapshot(this->symbol_id, new_params, this->branching_matrix);
 }
 
 // ------------------------------------

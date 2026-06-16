@@ -34,6 +34,7 @@ class HawkesModel {
         bool parameters_optimized = false;
         int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
         double last_global_time; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
+        std::vector<double> branching_matrix; // Matrice de branchement pour modéliser les interactions entre websockets
     public:
         int n_data; // Number of normalized data in buffer
         std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets
@@ -92,6 +93,8 @@ class HawkesModel {
          * d'un rajustement des paramètres ou d'envisager des extensions du modèle.
          */
         void residuals_analysis(normalized_data data);
+
+        void update_hawkes_params(const opt_hawkesParams& new_params);
 };
 
 // Classe qui permet de gérer les métriques d'un asset. Comme les variations de prix, les volumes, les intensités de Hawkes, etc. Elle est utilisée pour monitorer la santé du marché et détecter des anomalies.

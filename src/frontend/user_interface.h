@@ -59,6 +59,8 @@ class UserInterface {
         /// Une entrée par symbole : true = affiché dans les graphiques
         std::vector<bool> is_symbol_selected;
 
+        double branching_matrix_color_power_coeff = 4.0; // Coefficient pour ajuster la sensibilité de la couleur du fond dans le tableau de la matrice de branchement
+
         /// Nombre de frames par seconde cible, modifiable depuis le panneau de contrôle
         int update_speed = DefaultParameters::UPDATE_SPEED;
 
@@ -98,6 +100,16 @@ class UserInterface {
 
         /// symbol → liste de ScrollingBuffer (un buffer par exchange/websocket)
         std::map<std::string, std::vector<ScrollingBuffer>> all_buffers;
+
+        /// Max caché par buffer (symbol → exchange) — mis à jour O(1) par frame,
+        /// rescané toutes les ~120 frames pour corriger quand l'ancien max sort de la fenêtre
+        std::map<std::string, std::vector<float>> all_buf_max;
+
+        /// Compteur pour le rescan périodique du max visible
+        int rescan_frame_counter = 0;
+
+        /// Durée de la fenêtre visible (secondes), partagée entre update et rendu
+        float intensity_history = 10.0f;
 
         /**
          * Buffer glissant qui réinitialise les données quand x repasse à zéro
@@ -140,8 +152,8 @@ class UserInterface {
         /// Appelée chaque frame pour appliquer les mises à jour de modèles déclenchées par l'UI.
         void update_hawkes_models();
 
-        /// Graphique défilant des intensités λ(t) pour les symboles sélectionnés.
-        void render_scrolling_buffer();
+        /// Graphique défilant des intensités λ(t) pour les symboles sélectionnés pour le websocket source_idx.
+        void render_scrolling_buffer(int source_idx);
 
         /// Barre de titre fixe avec nom du dashboard et horloge temps réel (coin droit).
         void render_title_bar();
@@ -170,7 +182,11 @@ class UserInterface {
         /// Boucle de mise à jour de tous les modèles (appelée depuis le thread principal).
         void main_updater();
 
+        void update_intensity_buffers();
+        void render_exchange_strip(int source_idx);
+        void render_intensities_plot();
         void render_branching_matrix();
+        void render_parameters_panel();
 
         /**
          * Lance la boucle de rendu principale (ImGui + OpenGL).

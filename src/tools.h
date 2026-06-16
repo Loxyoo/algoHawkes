@@ -7,6 +7,8 @@
 #include <thread>
 #include <vector>
 
+#include "struct.h"
+
 #ifdef __APPLE__
     #include <pthread.h>
     #include <sys/qos.h>
@@ -111,17 +113,24 @@ class TelemetryManager {
             std::string symbol;
         };
 
+        struct ParametersSnapshot {
+            opt_hawkesParams params;
+            std::vector<double> branching_matrix;
+        };
+
     private:
         std::vector<Snapshot> live_data;
         std::vector<ResidualsSnapshot> residuals_data;
         std::vector<std::string> symbols;
         std::vector<std::unique_ptr<std::shared_mutex>> mutexes;
+        std::vector<ParametersSnapshot> parameters_snapshots; // Snapshot par symbole
 
     public:
         TelemetryManager(const std::vector<std::string>& syms) : symbols(syms) {
             size_t n = syms.size();
             live_data.resize(n);
             residuals_data.resize(n);
+            parameters_snapshots.resize(n);
             symbols_to_look_at.resize(n, false);
             mutexes.reserve(n);
             for (size_t i = 0; i < n; ++i)
@@ -152,6 +161,13 @@ class TelemetryManager {
                 vec.erase(vec.begin(), vec.begin() + (int)(vec.size() - MAX_RESIDUALS));
         }
 
+        void update_parameters_snapshot(int symbol_index, const opt_hawkesParams& params, const std::vector<double>& branching_matrix) {
+            if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return;
+            std::unique_lock lock(*mutexes[symbol_index]);
+            parameters_snapshots[symbol_index].params = params;
+            parameters_snapshots[symbol_index].branching_matrix = branching_matrix;
+        }
+
         // Appelé par l'UI — lit le dernier snapshot sans le consommer
         Snapshot get_snapshot(int symbol_index) const {
             if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return {};
@@ -163,6 +179,12 @@ class TelemetryManager {
             if (symbol_index < 0 || symbol_index >= (int)residuals_data.size()) return {};
             std::shared_lock lock(*mutexes[symbol_index]);
             return residuals_data[symbol_index];
+        }
+
+        ParametersSnapshot get_parameters_snapshot(int symbol_index) const {
+            if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return {};
+            std::shared_lock lock(*mutexes[symbol_index]);
+            return parameters_snapshots[symbol_index];
         }
 
         size_t symbol_count() const { return symbols.size(); }

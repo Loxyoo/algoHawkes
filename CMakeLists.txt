@@ -26,7 +26,7 @@ set(IMGUI_SOURCES
 )
 add_library(ImGuiLib STATIC ${IMGUI_SOURCES})
 target_include_directories(ImGuiLib PUBLIC ${IMGUI_DIR})
-target_link_libraries(ImGuiLib PRIVATE glfw OpenGL::GL)
+target_link_libraries(ImGuiLib PRIVATE glfw OpenGL::GL) 
 
 # --- 2. Config ImPlot ---
 set(IMPLOT_DIR ${CMAKE_SOURCE_DIR}/implot)

@@ -159,17 +159,20 @@ void UserInterface::render_main_bar() {
         ImGui::SameLine();
 
         // Déroulé pour sélectionner un symbole parmi ceux disponibles
-        if (ImGui::BeginMenu("Symbols")) {
-            for (size_t i = 0; i < config.symbols.size(); ++i) {
-                const std::string& symbol = config.symbols[i];
-                bool is_selected = is_symbol_selected[i];
-                if (ImGui::MenuItem(symbol.c_str(), NULL, is_selected)) {
-                    // Inverse l'état de sélection du symbole
-                    is_symbol_selected[i] = !is_symbol_selected[i];
-                }
+        static int selected_symbol = 0;
+        std::vector<const char*> labels;
+        for (auto& s : config.symbols) labels.push_back(s.c_str());
+        ImGui::SetNextItemWidth(150);
+        ImGui::Combo("Symbole##qq", &selected_symbol, labels.data(), (int)labels.size());
+
+        if (!is_symbol_selected[selected_symbol]) {
+            for (size_t i = 0; i < is_symbol_selected.size(); ++i) {
+                is_symbol_selected[i] = false;
             }
-            ImGui::EndMenu();
+            is_symbol_selected[selected_symbol] = true;
         }
+        
+        this->current_symbol_index = selected_symbol;
 
         ImGui::SameLine();
         // Affiche les websockets actifs
@@ -177,6 +180,16 @@ void UserInterface::render_main_bar() {
             ImGui::Text("%s ", ws.c_str());
             ImGui::SameLine();
         }
+
+        // Kill switch pour fermer l'application proprement
+        // On lui met un fond rouge opaque avec un texte rouge clair pour qu'il soit bien visible
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 80);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.00f, 0.00f, 0.00f, 0.2f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.00f, 0.00f, 1.00f));
+        if (ImGui::Button("Quitter")) {
+
+        }
+        ImGui::PopStyleColor(2);
 
         ImGui::EndMainMenuBar();
 
@@ -497,14 +510,18 @@ void UserInterface::render_symbol_selector() {
 }
 
 // ---------------------------------------------------------------------------
-// Scrolling Buffer — graphique défilant des intensités λ(t) en temps réel
+// Met à jour les buffers : un point par exchange, pour chaque symbole sélectionné.
+// À appeler UNE fois par frame, AVANT le rendu des graphiques.
 // ---------------------------------------------------------------------------
-void UserInterface::render_scrolling_buffer() {
-    ImGui::Begin("Hawkes Intensities Real-Time");
-
-    // Chaque frame : on récupère le dernier snapshot de chaque symbole sélectionné
-    // et on ajoute un point par exchange dans le buffer correspondant
+void UserInterface::update_intensity_buffers() {
     float t_render = (float)ImGui::GetTime();
+
+    // Rescan complet toutes les ~120 frames pour corriger le max quand l'ancien maximum
+    // sort de la fenêtre visible — le reste du temps la mise à jour est O(1).
+    bool do_rescan = (++rescan_frame_counter >= 120);
+    if (do_rescan) rescan_frame_counter = 0;
+    float t_min_visible = t_render - intensity_history;
+
     for (int i = 0; i < (int)config.symbols.size(); i++) {
         if (!is_symbol_selected[i])
             continue;
@@ -513,55 +530,107 @@ void UserInterface::render_scrolling_buffer() {
         if (snap.intensities.empty())
             continue;
 
-        const std::string& sym  = config.symbols[i];
-        auto& bufs              = all_buffers[sym];
-        // Crée les buffers manquants si un nouvel exchange apparaît dans le snapshot
+        const std::string& sym = config.symbols[i];
+        auto& bufs   = all_buffers[sym];
+        auto& maxes  = all_buf_max[sym];
+
         if (bufs.size() < snap.intensities.size())
             bufs.resize(snap.intensities.size());
+        if (maxes.size() < snap.intensities.size())
+            maxes.resize(snap.intensities.size(), 0.0f);
 
-        for (int k = 0; k < (int)snap.intensities.size(); k++)
-            bufs[k].AddPoint(t_render, (float)snap.intensities[k]);
+        for (int e = 0; e < (int)snap.intensities.size(); e++) {
+            float val = (float)snap.intensities[e];
+            bufs[e].AddPoint(t_render, val);
+
+            if (val >= maxes[e]) {
+                maxes[e] = val;  // O(1) : nouveau max immédiat
+            } else if (do_rescan) {
+                // O(n) mais ~2× par seconde seulement : recalcule le vrai max visible
+                float true_max = 0.0f;
+                for (const auto& p : bufs[e].Data)
+                    if (p.x >= t_min_visible) true_max = std::max(true_max, p.y);
+                maxes[e] = true_max;
+            }
+        }
     }
+}
 
-    // Contrôles d'affichage
-    static float history = 10.0f;
-    ImGui::SetNextItemWidth(150);
-    ImGui::SliderFloat("History Window", &history, 1, 60, "%.1f s");
+// ---------------------------------------------------------------------------
+// Graphique compact d'un seul exchange (une "ligne" du panneau de gauche).
+// ---------------------------------------------------------------------------
+void UserInterface::render_exchange_strip(int source_idx) {
+    const ImVec4 col = ImPlot::GetColormapColor(source_idx);
+    const char* ws_name = DefaultParameters::websockets[source_idx + 1];
 
-    static float y_limit = 2.0f;
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
-    ImGui::DragFloat("Max Intensity Y", &y_limit, 0.1f, 0.1f, 100.0f);
+    // En-tête : pastille colorée + nom + dernière valeur
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::Text("%s", ws_name);
+    ImGui::PopStyleColor();
 
-    static ImPlotAxisFlags flags = ImPlotAxisFlags_None;
     float t_now = (float)ImGui::GetTime();
+    std::string plot_id = "##strip_" + std::to_string(source_idx);
 
-    if (ImPlot::BeginPlot("##ScrollingHawkes", ImVec2(-1, 400))) {
-        ImPlot::SetupAxes("Time (s)", "λ (Intensity)", flags, flags);
-        // Fenêtre X glissante : on force ImGuiCond_Always pour qu'elle suive le temps réel
-        ImPlot::SetupAxisLimits(ImAxis_X1, t_now - history, t_now, ImGuiCond_Always);
-        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, y_limit);
+    // Calcule le max visible sur tous les symboles sélectionnés pour cet exchange — O(1)
+    float auto_y_max = 0.0f;
+    for (int i = 0; i < (int)config.symbols.size(); i++) {
+        if (!is_symbol_selected[i]) continue;
+        auto it = all_buf_max.find(config.symbols[i]);
+        if (it == all_buf_max.end()) continue;
+        if (source_idx < (int)it->second.size())
+            auto_y_max = std::max(auto_y_max, it->second[source_idx]);
+    }
+    auto_y_max = std::max(auto_y_max * 1.1f, 0.1f);  // +10 %, plancher à 0.1
+
+    // Graphique compact : hauteur réduite, pas de légende, axes minimaux
+    if (ImPlot::BeginPlot(plot_id.c_str(), ImVec2(-1, 90),
+                          ImPlotFlags_NoLegend | ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText)) {
+        ImPlot::SetupAxes(nullptr, nullptr,
+                          ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+                          ImPlotAxisFlags_NoGridLines);
+        ImPlot::SetupAxisLimits(ImAxis_X1, t_now - intensity_history, t_now, ImGuiCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0, auto_y_max, ImGuiCond_Always);
 
         for (int i = 0; i < (int)config.symbols.size(); i++) {
             if (!is_symbol_selected[i]) continue;
             const std::string& sym = config.symbols[i];
             auto& bufs = all_buffers[sym];
-            for (int k = 0; k < (int)bufs.size(); k++) {
-                auto& buf = bufs[k];
-                if (buf.Data.empty()) continue;
-                // k+1 car websockets[0] = "All" (agrégé) ; k=0 correspond à websockets[1]
-                const std::string& websocket = DefaultParameters::websockets[k + 1];
-                std::string label = sym + " [" + websocket + "]";
-                ImPlot::SetNextFillStyle(IMPLOT_AUTO_COL, 0.25f);
-                ImPlot::PlotLine(label.c_str(),
-                                 &buf.Data[0].x,
-                                 &buf.Data[0].y,
-                                 (int)buf.Data.size(),
-                                 0, buf.Offset, 2 * sizeof(float));
-            }
+            if (source_idx >= (int)bufs.size()) continue;
+            auto& buf = bufs[source_idx];
+            if (buf.Data.empty()) continue;
+
+            std::string label = sym + " [" + ws_name + "]";
+            ImPlot::SetNextLineStyle(col, 1.4f);
+            ImPlot::SetNextFillStyle(col, 0.15f);
+            ImPlot::PlotLine(label.c_str(),
+                             &buf.Data[0].x, &buf.Data[0].y,
+                             (int)buf.Data.size(),
+                             ImPlotLineFlags_None, buf.Offset, 2 * sizeof(float));
         }
         ImPlot::EndPlot();
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Panneau "intensités" — empile une bande compacte par exchange (style mockup).
+// ---------------------------------------------------------------------------
+void UserInterface::render_intensities_plot() {
+    update_intensity_buffers();  // mise à jour des buffers une seule fois
+
+    ImGui::Begin("Hawkes Intensities");
+
+    // Contrôle de la fenêtre temporelle visible (partagé avec update_intensity_buffers)
+    ImGui::SetNextItemWidth(130);
+    ImGui::SliderFloat("History", &intensity_history, 1, 60, "%.0f s");
+    ImGui::Separator();
+
+    int n_exchanges = IM_ARRAYSIZE(DefaultParameters::websockets) - 1;
+    for (int source_idx = 0; source_idx < n_exchanges; source_idx++) {
+        render_exchange_strip(source_idx);
+        ImGui::Spacing();
+    }
+
     ImGui::End();
 }
 
@@ -664,38 +733,79 @@ void UserInterface::render_qq_plot() {
 }
 
 void UserInterface::render_branching_matrix() {
-    if (ImGui::Begin("Branching Matrix")) {
+    ImGui::Begin("Branching Matrix");
 
-        std::vector<std::string> members = config.websocket_map.getMemberNames();
-        int n = (int)members.size();
+    std::vector<double> branching_matrix = telemetry_manager.get_parameters_snapshot(this->current_symbol_index).branching_matrix;
+    std::vector<std::string> members = config.websocket_map.getMemberNames();
+    int n = (int)members.size();
 
-        if (ImGui::BeginTable("BranchingMatrix", n+1)) {
-            // Affiche les en-têtes de colonnes
-            ImGui::TableSetupColumn(""); // La case en haut à gauche reste vide
-            for (int col = 0; col < n; ++col) {
-                ImGui::TableSetupColumn(members[col].c_str());
-            }
-            ImGui::TableHeadersRow(); // Affiche la première ligne d'en-têtes
-            // Affiche les en-têtes de lignes
-            for (int row = 0; row < n; ++row) {
-                ImGui::TableNextRow();
-
-                ImGui::TableNextColumn();
-                ImU32 header_bg_color = ImGui::GetColorU32(ImGuiCol_TableHeaderBg);
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, header_bg_color);
-                // On peut mettre le texte en gras ou changer sa couleur ici si on le souhaite
-                ImGui::Text("%s", members[row].c_str());
-                
-                for (int col = 0; col < n; ++col) {
-                    ImGui::TableNextColumn();
-                    ImGui::Text("NaN");
-                }
-            }
-            ImGui::EndTable();
-        }
+    if (branching_matrix.size() < (size_t)(n * n)) {
+        ImGui::TextDisabled("En attente des paramètres calibrés...");
         ImGui::End();
+        return;
     }
+
+    if (ImGui::BeginTable("BranchingMatrix", n + 1)) {
+        ImGui::TableSetupColumn("");
+        for (int col = 0; col < n; ++col)
+            ImGui::TableSetupColumn(members[col].c_str());
+        ImGui::TableHeadersRow();
+
+        for (int row = 0; row < n; ++row) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImU32 header_bg_color = ImGui::GetColorU32(ImGuiCol_TableHeaderBg);
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, header_bg_color);
+            ImGui::Text("%s", members[row].c_str());
+
+            for (int col = 0; col < n; ++col) {
+                ImGui::TableNextColumn();
+                double value = branching_matrix[row * n + col];
+                // Plus la valeur est proche de 1, plus la couleur du fond est rouge de manière exponentielle; plus elle est proche de 0, plus elle est noire
+                value = pow(value, branching_matrix_color_power_coeff); // Ajuste la sensibilité de la couleur
+                ImU32 cell_bg_color = ImGui::GetColorU32(ImVec4((float)value, 0.0f, 0.0f, 1.0f));
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, cell_bg_color);
+                ImGui::Text("%.3f", branching_matrix[row * n + col]);
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
 }
+
+// void UserInterface::render_parameters_panel() {
+//     ImGui::Begin("Parameters Panel");
+//     opt_hawkesParams params = telemetry_manager.get_parameters_snapshot(this->current_symbol_index).params;
+    
+//     std::vector<std::string> members = config.websocket_map.getMemberNames();
+//     int n = (int)members.size();
+
+//     static const int NUM_PARAM = 3; // mu, alpha, beta
+
+//     if (ImGui::BeginTable("ParametersTable", NUM_PARAM + 1)) {
+//         ImGui::TableSetupColumn("");
+//         ImGui::TableSetupColumn("base intensity");
+//         ImGui::TableSetupColumn("alpha");
+//         ImGui::TableSetupColumn("beta");
+//         ImGui::TableHeadersRow();
+
+//         for (int row = 0; row < n; ++row) {
+//             ImGui::TableNextRow();
+//             ImGui::TableNextColumn();
+//             ImU32 header_bg_color = ImGui::GetColorU32(ImGuiCol_TableHeaderBg);
+//             ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, header_bg_color);
+//             ImGui::Text("%s", members[row].c_str());
+
+//             for (int col = 0; col < NUM_PARAM; ++col) {
+//                 ImGui::TableNextColumn();
+//                 double value = 0.0;
+//                 if (col == 0) value = params.mu[row];
+//                 else if (col == 1) value = params.alpha[row];
+//                 else if (col == 2) value = params.beta[row];
+//             }
+//         }
+//     }
+// }
 
 // ---------------------------------------------------------------------------
 // Main Renderer — boucle principale ImGui + OpenGL avec gestion du framerate
@@ -746,12 +856,12 @@ int UserInterface::main_renderer() {
         if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
 
         render_main_bar();
+        render_intensities_plot();
         render_branching_matrix();
 
         update_hawkes_models();
         render_log_panel();
         render_control_panel();
-        render_scrolling_buffer();
         render_qq_plot();
 
         // Rendu OpenGL

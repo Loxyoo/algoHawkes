@@ -2,7 +2,8 @@
 #define STRUCT_H
 
 #include <string>
-#include "tools.h"
+#include <vector>
+#include <json/json.h>
 
 typedef struct {
     std::string exchange;        // Binance, Coinbase, Kraken, etc.
