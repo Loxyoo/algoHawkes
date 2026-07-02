@@ -176,10 +176,12 @@ void UserInterface::render_main_bar() {
 
         ImGui::SameLine();
         // Affiche les websockets actifs
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.00f, 1.00f, 0.00f, 1.00f));
         for (const std::string&ws : config.websocket_map.getMemberNames()) {
             ImGui::Text("%s ", ws.c_str());
             ImGui::SameLine();
         }
+        ImGui::PopStyleColor(1);
 
         // Kill switch pour fermer l'application proprement
         // On lui met un fond rouge opaque avec un texte rouge clair pour qu'il soit bien visible
@@ -640,17 +642,7 @@ void UserInterface::render_intensities_plot() {
 void UserInterface::render_qq_plot() {
     ImGui::Begin("QQ Plot — Résidus Hawkes");
 
-    // Sélecteur de symbole
-    static int selected_symbol = 0;
-    {
-        std::vector<const char*> labels;
-        for (auto& s : config.symbols) labels.push_back(s.c_str());
-        ImGui::SetNextItemWidth(150);
-        ImGui::Combo("Symbole##qq", &selected_symbol, labels.data(), (int)labels.size());
-    }
-    if (selected_symbol >= (int)config.symbols.size()) selected_symbol = 0;
-
-    auto snap = telemetry_manager.get_residuals_snapshot(selected_symbol);
+    auto snap = telemetry_manager.get_residuals_snapshot(this->current_symbol_index);
     int n_sources = (int)snap.residuals_by_source.size();
 
     // Compte total de résidus pour l'affichage
@@ -773,6 +765,10 @@ void UserInterface::render_branching_matrix() {
     ImGui::End();
 }
 
+void UserInterface::render_ticker() {
+
+}
+
 // void UserInterface::render_parameters_panel() {
 //     ImGui::Begin("Parameters Panel");
 //     opt_hawkesParams params = telemetry_manager.get_parameters_snapshot(this->current_symbol_index).params;
@@ -856,6 +852,7 @@ int UserInterface::main_renderer() {
         if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
 
         render_main_bar();
+        render_ticker();
         render_intensities_plot();
         render_branching_matrix();
 

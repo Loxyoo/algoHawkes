@@ -1,7 +1,7 @@
 {
     "Binance" : {
-        "url": "wss://fstream.binance.com/ws",
-        "routename" : "fstream.binance.com",
+        "url": "wss://stream.binance.com:9443/ws",
+        "routename" : "stream.binance.com",
         "request_format" : {
             "subscription_format" : {
                 "method": "SUBSCRIBE",

@@ -330,11 +330,12 @@ std::vector<double> HawkesModel::compute_virtual_intensities(double current_time
     for (int i = 0; i < n; i++) {
         double excitation = 0.0;
         
-        for (int k = i * n; k < (i + 1) * n; k++) {
+        for (int j = 0; j < n; j++) {
+            int index = coord2index(j, i, n);
             // On projette le decay dans une variable LOCALE, on ne touche pas à this->phi
-            double decayed_phi = this->phi[k] * std::exp(-this->beta[k] * dt);
+            double decayed_phi = this->phi[i*n+j] * std::exp(-this->beta[index] * dt);
             
-            excitation += this->alpha[k] * decayed_phi;
+            excitation += this->alpha[index] * decayed_phi;
         }
         
         virtual_intensities[i] = std::max(0.0, this->mu[i] + excitation);
@@ -370,8 +371,9 @@ void HawkesModel::update_model(normalized_data data) {
     // CALCUL DE L'INTENSITÉ
     for (int i = 0; i < n; i++) {
         double excitation = 0.0;
-        for (int k = i * n; k < (i + 1) * n; k++) {
-            excitation += this->alpha[k] * this->phi[k];
+        for (int j = 0; j < n; j++) {
+            int index = coord2index(j, i, n);
+            excitation += this->alpha[index] * this->phi[i*n+j];
         }
         this->intensities[i] = std::max(0.0, this->mu[i] + excitation);
     }
@@ -428,6 +430,7 @@ void HawkesModel::residuals_analysis(normalized_data data) {
     this->compensator[source_idx] += diff_compensator;
 
     // Mise à jour de l'exponentially weighted moving average (EWMA) des résidus
+    this->ewma_residuals = (1 - ewma_alpha) * ewma_residuals + ewma_alpha * diff_compensator;
 
     // N'envoie les résidus à la télémétrie qu'après calibration (au moins un β > 0)
     bool calibrated = std::any_of(this->beta.begin(), this->beta.end(),
@@ -467,7 +470,7 @@ HawkesOptimizer::HawkesOptimizer(
     opt_output_queue(opt_output_queue) 
 {
     // Paramètres par défaut de l'optimisation de Nelder Mead
-    this->optimizerConfig.max_iter = 2000;
+    this->optimizerConfig.max_iter = 4000;
     this->optimizerConfig.rho = 1.0;
     this->optimizerConfig.chi = 2.0;
     this->optimizerConfig.psi = 0.5;

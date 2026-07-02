@@ -187,6 +187,7 @@ class UserInterface {
         void render_intensities_plot();
         void render_branching_matrix();
         void render_parameters_panel();
+        void render_ticker();
 
         /**
          * Lance la boucle de rendu principale (ImGui + OpenGL).

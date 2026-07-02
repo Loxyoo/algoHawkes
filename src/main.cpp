@@ -29,11 +29,11 @@ int main(int, char**)
     std::vector<std::string> symbols = {"BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "XRPUSD"};
                                         // "ADAUSD", "BCHUSD", "LTCUSD", "DOTUSD", "TRXUSD", 
                                         // "UNIUSD", "VETUSD", "FILUSD", "ICPUSD", "XLMUSD", 
-                                        // "SUIUSD", "TAOUSD", "WLDUSD", "SKYUSD", "APEUSD"
+                                        // "SUIUSD", "TAOUSD", "WLDUSD", "SKYUSD", "APEUSD"};
 
     // Initialisation du manageur télémétrique
     TelemetryManager telemetry_manager(symbols);
-
+    
     // Initialisation des différentes shared queues pour la communication entre les différentes parties du système
     ThreadSafeQueue<normalized_data> shared_queue;
     ThreadSafeQueue<History> opt_input_queue;
@@ -75,7 +75,7 @@ int main(int, char**)
     }
     // On regroupe tous les paramètres de configuration du scheduler dans une structure pour faciliter leur passage entre les différentes parties du système.
     SchedulerConfig *schelConfig = new SchedulerConfig();
-     
+
     schelConfig->calibration_time = calibration_duration;
     schelConfig->training_time = training_duration;
     schelConfig->n_max_workers = max_workers;
