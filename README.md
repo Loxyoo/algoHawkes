@@ -2,7 +2,7 @@
 
 ## Abstract
 
-**algoHawkes** is a research-oriented, high-performance C/C++ platform designed to
+**AlgoHawkes** is a research-oriented, high-performance C/C++ platform designed to
 model, monitor, and analyse the *self- and mutually-exciting* dynamics of
 cryptocurrency order flow across multiple exchanges in real time.
 
