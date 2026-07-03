@@ -1,8 +1,8 @@
-# AlgoICT — Multivariate Hawkes-Based Cross-Exchange Order-Flow Analytics
+# AlgoHawkes — Multivariate Hawkes-Based Cross-Exchange Order-Flow Analytics (WORK IN PROGRESS)
 
 ## Abstract
 
-**AlgoICT** is a research-oriented, high-performance C/C++ platform designed to
+**algoHawkes** is a research-oriented, high-performance C/C++ platform designed to
 model, monitor, and analyse the *self- and mutually-exciting* dynamics of
 cryptocurrency order flow across multiple exchanges in real time.
 
@@ -24,7 +24,7 @@ high-frequency econometrics.
 
 ## Disclaimer
 
-AlgoICT is a **solo student project**, developed by a single author who is
+AlgoHawkes is a **solo student project**, developed by a single author who is
 still in the course of his Master's studies in Statistical and Stochastic
 Modelling. The code base has been written entirely from scratch and has
 not been reviewed by industry engineers.
@@ -43,10 +43,6 @@ Consequently, the reader should be aware that:
 - portions of the code retain original French comments and mixed naming
   conventions inherited from earlier prototypes.
 
-The repository is nevertheless made public in the spirit of open,
-reproducible research. Issues, code reviews and pull requests aimed at
-correcting mistakes or improving efficiency are warmly welcomed.
-
 ---
 
 ## 1. Scientific Motivation
@@ -58,7 +54,7 @@ clustering behaviour is poorly captured by Poisson-type assumptions and is
 naturally described by the class of **Hawkes self- and mutually-exciting
 point processes**, whose application to high-frequency finance is
 surveyed by Laub, Taimre & Pollett (2015) and Embrechts, Liniger & Lin
-(2011). AlgoICT provides a real-time implementation of the multivariate
+(2011). AlgoHawkes provides a real-time implementation of the multivariate
 Hawkes framework with an exponential kernel, together with an online
 diagnostic based on residual analysis.
 
@@ -114,7 +110,7 @@ $$
 Direct joint maximisation over $(\lambda_i, \alpha_{\cdot,i}, \beta_{\cdot,i})$
 is numerically ill-conditioned. Following the two-step scheme of Lyubushin
 & Pisarenko (1994) and Filimonov & Sornette (2015), the calibration
-routine of AlgoICT exploits the first-order optimality condition
+routine of AlgoHawkes exploits the first-order optimality condition
 
 $$
 \hat{\lambda}_i \, T \;+\; \sum_{j=1}^{m} G_j\!\bigl(T,\hat{\theta}_{j\to i}\bigr) \;=\; k_i,
@@ -373,7 +369,7 @@ by a firewall before launch.
 ## 7. Repository Layout
 
 ```
-algoICT/
+AlgoHawkes/
 ├── CMakeLists.txt              Build definition
 ├── config.json                 Per-exchange WebSocket protocols
 ├── src/
@@ -397,7 +393,7 @@ algoICT/
 
 ## 8. Academic Positioning and Future Work
 
-AlgoICT is a **research artefact**, not a production trading system. Its
+AlgoHawkes is a **research artefact**, not a production trading system. Its
 public release is motivated by the belief that reproducible, open
 implementations accelerate empirical work in market microstructure. Planned
 extensions include:
