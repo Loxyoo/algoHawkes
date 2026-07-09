@@ -65,14 +65,14 @@ diagnostic based on residual analysis.
 Consider a collection of $m$ simple counting processes
 $\mathbf{N} = \{N_1(\cdot), \dots, N_m(\cdot)\}$ on the interval $[0,T]$,
 where each dimension $i$ indexes one exchange. Let
-$\{t_l^{(j)} : j \in \{1,\dots,m\},\, l \in \mathbb{N}\}$ denote the
+$\{t_l^{(j)} : j \in \{1,\dots,m\}, l \in \mathbb{N}\}$ denote the
 observed arrival times. The process $\mathbf{N}$ is called a *multivariate
 Hawkes process* when, for every $i \in \{1,\dots,m\}$, the conditional
 intensity of the $i$-th component admits the representation
 
 $$
-\lambda_i^*(t) \;=\; \lambda_i \;+\; \sum_{j=1}^{m} \sum_{t_l^{(j)} < t}
-\Phi_{\theta_{j\to i}}\!\bigl(t - t_l^{(j)}\bigr),
+\lambda_i^*(t) = \lambda_i + \sum_{j=1}^{m} \sum_{t_l^{(j)} < t}
+\Phi_{\theta_{j\to i}}\bigl(t - t_l^{(j)}\bigr),
 $$
 
 with $\lambda_i > 0$ the **background intensity** of dimension $i$ and
@@ -84,7 +84,7 @@ Throughout the platform, following Filimonov and Sornette (2015), we
 adopt the **exponential kernel**
 
 $$
-\Phi_{\theta_{j\to i}}(t) \;=\; \alpha_{j,i}\, \exp\!\bigl(-\beta_{j,i}\, t\bigr),
+\Phi_{\theta_{j\to i}}(t) = \alpha_{j,i} \exp\bigl(-\beta_{j,i} t\bigr),
 \qquad \alpha_{j,i} \geq 0,\ \beta_{j,i} > 0,
 $$
 
@@ -101,12 +101,12 @@ For dimension $i$, the log-likelihood on $[0,T]$ takes the form
 
 $$
 \log \mathcal{L}_i
-\;=\; \sum_{p=1}^{k_i} \log\!\bigl(\lambda_i^*(t_p^{(i)})\bigr)
-      \;-\; \lambda_i T
-      \;-\; \sum_{j=1}^{m}
+= \sum_{p=1}^{k_i} \log\bigl(\lambda_i^*(t_p^{(i)})\bigr)
+      - \lambda_i T
+      - \sum_{j=1}^{m}
              \sum_{l=1}^{k_j}
              \int_{t_l^{(j)}}^{T}
-             \Phi_{\theta_{j\to i}}\!\bigl(u - t_l^{(j)}\bigr)\, du.
+             \Phi_{\theta_{j\to i}}\bigl(u - t_l^{(j)}\bigr) du.
 $$
 
 Direct joint maximisation over $(\lambda_i, \alpha_{\cdot,i}, \beta_{\cdot,i})$
@@ -115,7 +115,7 @@ is numerically ill-conditioned. Following the two-step scheme of Lyubushin
 routine of AlgoHawkes exploits the first-order optimality condition
 
 $$
-\hat{\lambda}_i \, T \;+\; \sum_{j=1}^{m} G_j\!\bigl(T,\hat{\theta}_{j\to i}\bigr) \;=\; k_i,
+\hat{\lambda}_i  T + \sum_{j=1}^{m} G_j\bigl(T,\hat{\theta}_{j\to i}\bigr) = k_i,
 $$
 
 which yields a closed-form expression for $\hat{\lambda}_i$ given the
@@ -132,20 +132,20 @@ A naive evaluation of $\lambda_i^*(t)$ at each new event is $O(k_i)$ in
 memory scans; the exponential kernel avoids this. Introducing
 
 $$
-A_{i,j}(p) \;=\; \sum_{l : t_l^{(j)} < t_p^{(i)}} \exp\!\bigl(-\beta_{j,i}\,(t_p^{(i)} - t_l^{(j)})\bigr),
+A_{i,j}(p) = \sum_{l : t_l^{(j)} < t_p^{(i)}} \exp\bigl(-\beta_{j,i}(t_p^{(i)} - t_l^{(j)})\bigr),
 $$
 
 the intensity admits the compact recursion
 
 $$
-\lambda_i^*(t_{p+1}^{(i)}) \;=\; \lambda_i \;+\; \sum_{j=1}^{m} \alpha_{j,i}\, A_{i,j}(p+1),
+\lambda_i^*(t_{p+1}^{(i)}) = \lambda_i + \sum_{j=1}^{m} \alpha_{j,i} A_{i,j}(p+1),
 $$
 
 where $A_{i,j}$ satisfies the telescoping identity
 
 $$
-A_{i,j}(p+1) \;=\; e^{-\beta_{j,i}\,(t_{p+1}^{(i)} - t_p^{(i)})}\, A_{i,j}(p)
-\;+\; \sum_{l\in\mathcal{I}(p)} e^{-\beta_{j,i}\,(t_{p+1}^{(i)} - t_l^{(j)})}.
+A_{i,j}(p+1) = e^{-\beta_{j,i}(t_{p+1}^{(i)} - t_p^{(i)})} A_{i,j}(p)
++ \sum_{l\in\mathcal{I}(p)} e^{-\beta_{j,i}(t_{p+1}^{(i)} - t_l^{(j)})}.
 $$
 
 A globally-indexed variant $\phi_{i,j}(t_k)$ is shown to be equivalent
@@ -160,17 +160,17 @@ amenable to future hardware acceleration (FPGA / SIMD) (see the work of C. Guo &
 Model quality is assessed *online* through the **compensator**
 
 $$
-\Lambda_i(t) \;=\; \int_0^t \lambda_i^*(s)\, ds.
+\Lambda_i(t) = \int_0^t \lambda_i^*(s) ds.
 $$
 
 With the exponential kernel, $\Lambda_i$ inherits an incremental form
 using the same $\phi_{i,j}$ already maintained by the intensity update:
 
 $$
-\Lambda_i(t_{k+1}) \;=\; \Lambda_i(t_k)
-\;+\; \lambda_i\, \Delta t_k
-\;+\; \sum_{j=1}^{m} \frac{\alpha_{j,i}}{\beta_{j,i}}
-       \bigl(1 - e^{-\beta_{j,i}\, \Delta t_k}\bigr)\, \phi_{i,j}(t_k).
+\Lambda_i(t_{k+1}) = \Lambda_i(t_k)
++ \lambda_i \Delta t_k
++ \sum_{j=1}^{m} \frac{\alpha_{j,i}}{\beta_{j,i}}
+       \bigl(1 - e^{-\beta_{j,i} \Delta t_k}\bigr) \phi_{i,j}(t_k).
 $$
 
 The **random time-change theorem** (Papangelou, 1972) then yields the
