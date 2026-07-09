@@ -24,11 +24,13 @@ namespace DefaultParameters {
     static constexpr int UPDATE_SPEED     = 60;  ///< Fréquence de rafraîchissement cible (FPS)
     static constexpr int N_MAX_WORKERS    = 2;   ///< Nombre de workers Hawkes par défaut
 
-    /// Index 0 = "All" (agrégé), indices 1-N = exchanges individuels
-    static const char* websockets[] = {"All", "Binance", "Coinbase", "Kraken", "Bybit", "OKX"};
+    /// Index 0 = "All" (agrégé), indices 1-N = exchanges individuels.
+    /// Défini dans user_interface.cpp et modifiable au runtime (ex : renseigné
+    /// dynamiquement avec les exchanges fictifs du stress test).
+    extern std::vector<std::string> websockets;
     static const char* models[]     = {"Hawkes", "LSTM", "Transformer"};
 
-    static const std::string default_symbol   = "BTCUSD"; ///< Symbole sélectionné au démarrage
+    extern std::string default_symbol; ///< Symbole sélectionné au démarrage (défini dans user_interface.cpp)
     static const std::string current_symbol   = "All";
     static const std::string current_exchange = "All";
 }
@@ -182,12 +184,27 @@ class UserInterface {
         /// Boucle de mise à jour de tous les modèles (appelée depuis le thread principal).
         void main_updater();
 
+        /// Mets à jour les buffers d'intensité pour tous les symboles et exchanges
         void update_intensity_buffers();
+
+        /// 
         void render_exchange_strip(int source_idx);
+
+        /// Réalise le rendu des graphiques d'intensité pour tous les symboles sélectionnées et exchanges
         void render_intensities_plot();
+
+        /// Réalise le rendu du panneau de la matrice de branchement (branching matrix) pour le modèle de Hawkes
         void render_branching_matrix();
+
+        /// @brief 
         void render_parameters_panel();
+
+        /// @brief 
         void render_ticker();
+
+        void render_theoretical_branching_matrix() {
+            
+        }
 
         /**
          * Lance la boucle de rendu principale (ImGui + OpenGL).

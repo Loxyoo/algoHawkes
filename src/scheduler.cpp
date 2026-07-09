@@ -3,6 +3,10 @@
 #include <cstdlib>
 #include "hawkesWorker.h"
 
+#ifndef STRESS_TEST
+    #include "calibration/hawkes_model/include/ogata_thinning_algo.h"
+#endif
+
 // ---=== CONSTRUCTOR ===---
 Scheduler::Scheduler(SchedulerConfig* config, 
     std::vector<std::unique_ptr<GenericWebSocket>>& clients, 
@@ -18,16 +22,16 @@ Scheduler::Scheduler(SchedulerConfig* config,
     clients(clients),
     calibration(calibration),
     telemetry_manager(telemetry_manager) {
-    // The user can choose the maximum number of workers (threads) to use for calibration.
-    // By default, use all available cores minus a security margin.
-    // We need to check that n_max_workers choosen by the user is possible.
+    // L'utilisateur peut choisir le maximum de workers (threads) à utiliser durant la calibration
+    // Par défaut, le scheduler utilise tout les coeurs disponible de la machine moins une marge de sécurité pré-définit
+    // Nous avons besoin de checker que le n_max_workers choisit par l'utilisateur est possible.
     if (config->n_max_workers > 0 && config->n_max_workers <= available_cores) {
         this->n_max_workers = config->n_max_workers;
     }
 
     // this->scheduler_state = IDLE;
 
-    // If there is not a worker mapping, change the state to calibrating
+    // S'il n'y a pas de worker mapping, change l'état à calibrating
     if (!config->worker_mapping) this->scheduler_state = CALIBRATING;
 
     this->config = config;
@@ -99,6 +103,8 @@ Json::Value Scheduler::greedy_cores_packing(std::vector<volume_symbol> assets_vo
 
 void Scheduler::run() {
     this->state = INITIALIZATION;
+
+#ifndef STRESS_TEST
     // Le vecteur websocketThreads stock les threads de chaque websocket
     // On les lancera en concurentielle sur un coeur physique
     std::vector<std::thread> websocketThreads(this->clients.size());
@@ -109,7 +115,18 @@ void Scheduler::run() {
             this->clients[i]->connect();
         });
     }
+#endif
 
+#ifdef STRESS_TEST
+    // En mode stress test, il n'y a pas de flux websocket réel : la calibration
+    // par mesure de volume n'a aucun sens. On assigne directement les symbols
+    // aux workers en round-robin.
+    std::cout << "Mode STRESS_TEST : calibration ignorée, mapping round-robin direct." << std::endl;
+    for (int i = 0; i < (int)this->config->symbols.size(); i++) {
+        this->map[this->config->symbols[i]] = i % this->n_max_workers;
+    }
+    std::cout << this->map.toStyledString() << std::endl;
+#else
     // On vérifie si un fichier de paramètres optimisés existe et est non-vide pour chaque symbol.
     // Si c'est le cas pour tous, la calibration est inutile : les paramètres sont déjà connus
     // et seront chargés directement dans les modèles par le constructeur de Worker.
@@ -145,6 +162,7 @@ void Scheduler::run() {
         });
         calibrationThread.join();
     }
+#endif
 
     // On crée les listes des symbols associé à chaque worker
     std::vector<std::vector<std::string>> temp_worker_map(this->n_max_workers);
@@ -164,7 +182,7 @@ void Scheduler::run() {
         workerParam->websocket_map    = this->config->websocket_map;
         workerParam->symbols_map      = this->config->symbols_map;
         workerParam->assets           = temp_worker_map[i];
-        workerParam->n_websockets     = this->clients.size();
+        workerParam->n_websockets     = this->config->dimensions;
         workerParam->training_duration= this->config->training_time;
         workerParam->worker_id        = i;
 
@@ -192,7 +210,7 @@ void Scheduler::run() {
         snprintf(threadName, sizeof(threadName), "Worker-%d", i);
         pthread_setname_np(threadName);
         // Initialisation de la classe qui va envoyer appeller les fonctions C pour les optimisations.
-        HawkesOptimizer optimizer(this->opt_input_queue, this->opt_output_queue, this->clients.size());
+        HawkesOptimizer optimizer(this->opt_input_queue, this->opt_output_queue, this->config->dimensions);
         optimizer.run();
     });
     std::cout << "Worker d'optimisation lancé !" << std::endl;
@@ -201,8 +219,10 @@ void Scheduler::run() {
     for (auto& t : workers) {
         if (t.joinable()) t.join();
     }
+#ifndef STRESS_TEST
     // On ferme les connections et on arrête le thread gérant les websockets.
     for (auto& client : websocketThreads) {
         client.join();
     }
+#endif
 }

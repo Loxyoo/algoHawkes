@@ -43,6 +43,8 @@ Consequently, the reader should be aware that:
 - portions of the code retain original French comments and mixed naming
   conventions inherited from earlier prototypes.
 
+⚠️ For the moment, this project only work on **MacOS** with the **Apple Silicon architecture**. On these processors, there is more restrictions for multi-threading and multi-coring, so it work differently.
+
 ---
 
 ## 1. Scientific Motivation
@@ -87,8 +89,8 @@ $$
 $$
 
 whose parameters admit an intuitive interpretation: $\alpha_{j,i}$ is the
-**excitation strength** ("force") of dimension $j$ onto $i$, while
-$\beta_{j,i}$ is the associated **memory-decay rate** ("oubli"). The
+**excitation strength** of dimension $j$ onto $i$, while
+$\beta_{j,i}$ is the associated **memory-decay rate**. The
 branching-ratio matrix $\Gamma_{j,i} = \alpha_{j,i} / \beta_{j,i}$
 governs stationarity: its spectral radius must remain strictly below one
 for the process to be well-defined on $\mathbb{R}_+$.
@@ -151,7 +153,7 @@ to $A_{i,j}(p)$ and is the one implemented in
 [HawkesModel](src/hawkesWorker.h). The update is $O(m)$ per event and
 requires no history rescan — this is the *hot path* of the platform, and
 its purely local, recursive structure is what makes the algorithm
-amenable to future hardware acceleration (FPGA / SIMD).
+amenable to future hardware acceleration (FPGA / SIMD) (see the work of C. Guo & W. Luk). 
 
 ### 1.4 Online residual analysis
 
@@ -348,16 +350,41 @@ Dependencies fetched by vcpkg are declared in [vcpkg.json](vcpkg.json).
 
 ## 6. Building and Running
 
+### Build
+
 ```sh
-# 1. Bootstrap dependencies via vcpkg
+# Bootstrap dependencies via vcpkg
 vcpkg install
 
-# 2. Configure and build
-cmake --preset default
-cmake --build build --config Release
+# Create the build folder
+mkdir build
+cd build
 
-# 3. Launch
-./build/MonApp
+# Configure
+cmake --preset default
+```
+
+### Launch the stress-tests
+```sh
+# build
+cmake -DSTRESS_TEST=ON .. 
+cmake --build . --target MonApp
+
+# Launch
+./MonApp [n_dimensions] [time_execution] [n_symbols] [simulation_speed]
+```
+
+Example : 
+```./MonApp 5 60 10 100```
+
+### Launch on real data
+```sh
+# build
+cmake -DSTRESS_TEST=ON .. 
+cmake --build . --target MonApp
+
+# Launch
+./MonApp
 ```
 
 The application will attempt to open WebSocket connections to the five
@@ -424,6 +451,7 @@ Contributions, replications and critiques are welcome.
 - F. Papangelou, *Integrability of expected increments of point processes
   and a related random change of scale*, Transactions of the American
   Mathematical Society 165 (1972), pp. 483–506.
+- Guo, C., & Luk, W. (2013, September). Accelerating maximum likelihood estimation for hawkes point processes. In 2013 23rd     International Conference on Field programmable Logic and Applications (pp. 1-6). IEEE.
 
 ---
 

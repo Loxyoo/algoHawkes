@@ -40,7 +40,7 @@ Simplex* init_simplex(int n_params);
  */
 void free_simplex(Simplex* s, int n_params);
 
-LL_params* init_ll_params();
+LL_params* init_ll_params(int n_dim);
 
 
 void free_ll_params(LL_params* p);

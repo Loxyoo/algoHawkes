@@ -28,15 +28,19 @@ typedef struct {
 } OgataParams;
 
 // --- 1. DEFINITIONS PROPRES ---
+// Valeur par défaut historique (5 exchanges). Le pipeline d'optimisation n'utilise
+// PLUS cette constante : la dimension réelle est passée à l'exécution via
+// NelderMeadConfig.n_dim (voir optimization.c). On la garde uniquement comme
+// valeur par défaut pour le code de test standalone.
 #define N_WS 5
 
-// Structure du vecteur pour UNE dimension cible : [Mu, Alpha_0..N, Beta_0..N]
-#define N_PARAMS_PER_DIM (1 + 2 * N_WS) 
+// Nombre de paramètres pour UNE dimension cible : [Mu, Alpha_0..n_dim-1, Beta_0..n_dim-1].
+// Se calcule à l'exécution avec 1 + 2 * n_dim.
+#define N_PARAMS_FOR_DIM(n_dim) (1 + 2 * (n_dim))
 
-// Offsets définitifs
+// Offsets fixes. OFF_BETA dépend de la dimension et vaut (1 + n_dim) à l'exécution.
 #define OFF_MU    0
-#define OFF_ALPHA 1            
-#define OFF_BETA  (1 + N_WS)   
+#define OFF_ALPHA 1
 
 // Structures de données
 typedef struct {
@@ -68,9 +72,11 @@ typedef struct {
     int max_iter;
     double rho; double chi; double psi; double sigma;
     param_bounds* bounds;
+    int n_dim; // Nombre de dimensions du processus (runtime, remplace N_WS)
 } NelderMeadConfig;
 
 typedef struct {
+    int n_dim;    // Nombre de dimensions (taille des buffers phi/lambda)
     double* phi;
     double* lambda; // Pas strictement nécessaire ici, mais utile pour debug
     double last_t_global; // Essentiel pour le multivarié

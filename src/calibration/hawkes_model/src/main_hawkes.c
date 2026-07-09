@@ -58,10 +58,11 @@ int main_hawkes() {
     // 1. Configuration de l'optimiseur
     NelderMeadConfig conf;
     conf.max_iter = 5000; // Assez d'itérations pour converger
-    conf.rho = 1.0; 
-    conf.chi = 2.0; 
-    conf.psi = 0.5; 
+    conf.rho = 1.0;
+    conf.chi = 2.0;
+    conf.psi = 0.5;
     conf.sigma = 0.5;
+    conf.n_dim = dimensions; // Dimension du processus (runtime)
     
     // Le nombre de paramètres PAR dimension est : 1 Mu + N_DIM Alpha + N_DIM Beta
     int n_params_local = 1 + 2 * dimensions; 

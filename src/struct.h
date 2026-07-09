@@ -18,12 +18,14 @@ typedef struct{
     int calibration_time; // Calibrate duration
     int training_time; // Training duration
     int n_max_workers; // Number max of cores can be used
+    int dimensions; // Number of dimensions / websockets
     std::vector<std::string> symbols; // List symbols
     // std::vector<std::unique_ptr<GenericWebSocket>> clients; // List of active clients
     Json::Value websocket_map; // Map of websockets associated to an integer ID
     Json::Value worker_mapping;
-     // Input queue for normalized data from WebSocket connections
-     Json::Value symbols_map; // Associate a symbol to an integer ID
+    // Input queue for normalized data from WebSocket connections
+    Json::Value symbols_map; // Associate a symbol to an integer ID
+
 } SchedulerConfig;
 
 // Used to stock the number of data received from a symbol. Notably used in the core_packing function and the calibration phase

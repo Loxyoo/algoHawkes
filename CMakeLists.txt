@@ -6,6 +6,10 @@ project(AlgoICT LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Mode stress test : remplace les websockets par n_symbols threads d'Ogata en temps réel.
+# Activation : cmake -DSTRESS_TEST=ON ..
+option(STRESS_TEST "Build en mode simulation Ogata (pas de websockets)" OFF)
+
 add_compile_definitions(GL_SILENCE_DEPRECATION)
 
 find_package(OpenGL REQUIRED)
@@ -47,7 +51,9 @@ file(GLOB_RECURSE USER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.h"
 )
 
-add_executable(MonApp ${USER_SOURCES})
+add_executable(MonApp ${USER_SOURCES}
+ src/data_simulation.cpp
+ src/data_simulation.h)
 
 target_include_directories(MonApp PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -58,7 +64,36 @@ target_include_directories(MonApp PRIVATE
 
 target_link_libraries(MonApp PRIVATE ImPlotLib ImGuiLib glfw OpenGL::GL ixwebsocket::ixwebsocket JsonCpp::JsonCpp)
 
+# Chemin absolu vers les assets (fonts, etc.) — utilisé par le code pour éviter
+# la dépendance au CWD au lancement.
+target_compile_definitions(MonApp PRIVATE ALGOICT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+if(STRESS_TEST)
+    target_compile_definitions(MonApp PRIVATE STRESS_TEST)
+    message(STATUS "MonApp: mode STRESS_TEST activé")
+endif()
+
 if (APPLE)
     target_compile_options(MonApp PRIVATE -g -O0)
     target_link_libraries(MonApp PRIVATE "-framework IOKit" "-framework CoreVideo" "-framework Cocoa")
+endif()
+
+# --- 4. Test standalone de l'algorithme d'Ogata (C++) ---
+# Build avec : cmake --build . --target test_ogata_cpp
+# Exécution   : ./test_ogata_cpp [dimensions] [T]
+add_executable(test_ogata_cpp
+    ${CMAKE_SOURCE_DIR}/src/data_simulation.cpp
+)
+
+target_compile_definitions(test_ogata_cpp PRIVATE OGATA_TEST_MAIN_CPP)
+
+target_include_directories(test_ogata_cpp PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_ogata_cpp PRIVATE JsonCpp::JsonCpp)
+
+if (APPLE)
+    target_compile_options(test_ogata_cpp PRIVATE -g -O0)
 endif()

@@ -1,5 +1,11 @@
 #include "user_interface.h"
 
+// Définition unique des paramètres modifiables au runtime déclarés `extern` dans l'en-tête.
+namespace DefaultParameters {
+    std::vector<std::string> websockets = {"All", "Binance", "Coinbase", "Kraken", "Bybit", "OKX"};
+    std::string default_symbol = "BTCUSD";
+}
+
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
@@ -102,9 +108,13 @@ void UserInterface::ApplyBloombergStyle() {
 
 void UserInterface::LoadTerminalFont() {
     ImGuiIO& io = ImGui::GetIO();
-    // Police monospace — adapte le chemin à ton projet.
-    // JetBrains Mono, Roboto Mono, Consolas ou IBM Plex Mono conviennent.
-    io.Fonts->AddFontFromFileTTF("src/frontend/fonts/JetBrains_Mono/JetBrainsMono-VariableFont_wght.ttf", 15.0f);
+    // Police monospace — chemin absolu injecté par CMake pour être indépendant du CWD.
+#ifdef ALGOICT_SOURCE_DIR
+    std::string font_path = std::string(ALGOICT_SOURCE_DIR) + "/src/frontend/fonts/JetBrains_Mono/JetBrainsMono-VariableFont_wght.ttf";
+#else
+    std::string font_path = "src/frontend/fonts/JetBrains_Mono/JetBrainsMono-VariableFont_wght.ttf";
+#endif
+    io.Fonts->AddFontFromFileTTF(font_path.c_str(), 15.0f);
     // Ne pas appeler io.Fonts->Build() ici : le backend OpenGL le fait automatiquement à l'init.
 }
 
@@ -227,7 +237,11 @@ void UserInterface::render_selector_bar() {
     float item_width    = (available_width - (spacing * 2.0f)) / 3.0f;
 
     ImGui::SetNextItemWidth(item_width);
-    ImGui::Combo("##combo", &current_websocket, DefaultParameters::websockets, IM_ARRAYSIZE(DefaultParameters::websockets));
+    // ImGui::Combo attend un tableau de const char* : on projette le vecteur de std::string.
+    std::vector<const char*> ws_items;
+    ws_items.reserve(DefaultParameters::websockets.size());
+    for (const std::string& ws : DefaultParameters::websockets) ws_items.push_back(ws.c_str());
+    ImGui::Combo("##combo", &current_websocket, ws_items.data(), (int)ws_items.size());
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(item_width);
@@ -563,7 +577,7 @@ void UserInterface::update_intensity_buffers() {
 // ---------------------------------------------------------------------------
 void UserInterface::render_exchange_strip(int source_idx) {
     const ImVec4 col = ImPlot::GetColormapColor(source_idx);
-    const char* ws_name = DefaultParameters::websockets[source_idx + 1];
+    const char* ws_name = DefaultParameters::websockets[source_idx + 1].c_str();
 
     // En-tête : pastille colorée + nom + dernière valeur
     ImGui::PushStyleColor(ImGuiCol_Text, col);
@@ -627,7 +641,7 @@ void UserInterface::render_intensities_plot() {
     ImGui::SliderFloat("History", &intensity_history, 1, 60, "%.0f s");
     ImGui::Separator();
 
-    int n_exchanges = IM_ARRAYSIZE(DefaultParameters::websockets) - 1;
+    int n_exchanges = (int)DefaultParameters::websockets.size() - 1;
     for (int source_idx = 0; source_idx < n_exchanges; source_idx++) {
         render_exchange_strip(source_idx);
         ImGui::Spacing();
@@ -711,7 +725,7 @@ void UserInterface::render_qq_plot() {
             auto& qq = per_source[src];
             if (qq.xs.empty()) continue;
             // websockets[0] = "All", donc source 0 → websockets[1]
-            const char* ws_name = DefaultParameters::websockets[src + 1];
+            const char* ws_name = DefaultParameters::websockets[src + 1].c_str();
             ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f,
                                        ImPlot::GetColormapColor(src), 0.7f,
                                        ImPlot::GetColormapColor(src));

@@ -34,10 +34,11 @@ void free_simplex(Simplex* s, int n_params) {
     }
 }
 
-LL_params* init_ll_params() {
+LL_params* init_ll_params(int n_dim) {
     LL_params* p = malloc(sizeof(LL_params));
-    p->phi = calloc(N_WS, sizeof(double));
-    p->lambda = calloc(N_WS, sizeof(double));
+    p->n_dim = n_dim;
+    p->phi = calloc(n_dim, sizeof(double));
+    p->lambda = calloc(n_dim, sizeof(double));
     p->last_t_global = -1;
     return p;
 }
@@ -47,7 +48,7 @@ void free_ll_params(LL_params* p) {
 }
 
 void reset_ll_params(LL_params* p) {
-    for(int i=0; i<N_WS; i++) p->phi[i] = 0.0;
+    for(int i=0; i<p->n_dim; i++) p->phi[i] = 0.0;
     p->last_t_global = -1;
 }
 
@@ -55,7 +56,10 @@ void reset_ll_params(LL_params* p) {
 
 Simplex* init_points(param_bounds* bounds, int n_params) {
     Simplex* simplex = init_simplex(n_params);
-    
+    // n_params = 1 (Mu) + 2 * n_dim (Alpha + Beta) => n_dim = (n_params - 1) / 2
+    int n_dim = (n_params - 1) / 2;
+    int off_beta = 1 + n_dim;
+
     for(int k = 0; k < n_params + 1; k++) {
         // A. Génération aléatoire brute
         for(int i = 0; i < n_params; i++) {
@@ -64,11 +68,11 @@ Simplex* init_points(param_bounds* bounds, int n_params) {
         }
 
         // B. Application des contraintes Hawkes (Alpha < Beta)
-        // On itère sur les sources (0 à N_WS-1)
-        for(int src = 0; src < N_WS; src++) {
+        // On itère sur les sources (0 à n_dim-1)
+        for(int src = 0; src < n_dim; src++) {
             // CORRECTION ICI : Utilisation des bons OFFSETS
             double alpha = simplex->vertices[k]->values[OFF_ALPHA + src];
-            double beta  = simplex->vertices[k]->values[OFF_BETA + src];
+            double beta  = simplex->vertices[k]->values[off_beta + src];
 
             if (alpha < 0) alpha = 0.001; // Force positif
             if (beta <= 0.01) beta = 0.1; 
@@ -79,7 +83,7 @@ Simplex* init_points(param_bounds* bounds, int n_params) {
             }
 
             simplex->vertices[k]->values[OFF_ALPHA + src] = alpha;
-            simplex->vertices[k]->values[OFF_BETA + src]  = beta;
+            simplex->vertices[k]->values[off_beta + src]  = beta;
         }
         
         // Contrainte Mu positif
@@ -93,16 +97,18 @@ Simplex* init_points(param_bounds* bounds, int n_params) {
 double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int target_dim) {
     double T_max = history->T_max;
     double mu = p->values[OFF_MU];
+    int n_dim = ll_params->n_dim;
+    int off_beta = 1 + n_dim;
 
     reset_ll_params(ll_params);
-    
+
     double log_sum = 0.0;
     int i;
     for(i = 0; i < history->total_events; i++) {
         double t_now = history->events[i].time;
         int type_src = history->events[i].type;
 
-        if (type_src < 0 || type_src >= N_WS) {
+        if (type_src < 0 || type_src >= n_dim) {
             printf("Warning: Invalid source type %d at event %d/%d from calculate_ll function\n", type_src, i, history->total_events);
             continue; // Invalide la configuration
         }
@@ -111,15 +117,15 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
         double dt = t_now - ll_params->last_t_global;
         if (ll_params->last_t_global == -1) dt = 0;
 
-        for(int src=0; src < N_WS; src++) {
-             double b = p->values[OFF_BETA + src];
+        for(int src=0; src < n_dim; src++) {
+             double b = p->values[off_beta + src];
              ll_params->phi[src] *= exp(-b * dt);
         }
-        
+
         // 2. Calcul Intensité (si c'est la cible)
         if (type_src == target_dim) {
             double lambda = mu;
-            for(int src=0; src < N_WS; src++) {
+            for(int src=0; src < n_dim; src++) {
                 double a = p->values[OFF_ALPHA + src];
                 lambda += a * ll_params->phi[src];
             }
@@ -137,8 +143,9 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
     double integral = mu * T_max;
     for(int i=0; i < history->total_events; i++) {
         int src = history->events[i].type;
+        if (src < 0 || src >= n_dim) continue; // Type invalide : déjà signalé plus haut
         double a = p->values[OFF_ALPHA + src];
-        double b = p->values[OFF_BETA + src];
+        double b = p->values[off_beta + src];
         integral += (a / b) * (1.0 - exp(-b * (T_max - history->events[i].time)));
         //printf("a:%lf b:%lf \n", a, b);
     }
@@ -149,13 +156,16 @@ double calculate_ll(SimplexPoint* p, History* history, LL_params* ll_params, int
 
 // Wrapper avec Barrière et Pénalités
 void ll_objective(SimplexPoint* p, History* history, LL_params* ll_params, int target_dim) {
+    int n_dim = ll_params->n_dim;
+    int off_beta = 1 + n_dim;
+
     // 1. Check contraintes Hard
     int invalid = 0;
     if (p->values[OFF_MU] < 0) invalid = 1;
-    
-    for(int src=0; src<N_WS; src++) {
+
+    for(int src=0; src<n_dim; src++) {
         double a = p->values[OFF_ALPHA + src];
-        double b = p->values[OFF_BETA + src];
+        double b = p->values[off_beta + src];
         if (a < 0 || b <= 0 || a >= b) invalid = 1;
     }
 
@@ -166,15 +176,15 @@ void ll_objective(SimplexPoint* p, History* history, LL_params* ll_params, int t
 
     // 2. Calcul LL
     double ll = calculate_ll(p, history, ll_params, target_dim);
-    
+
     // 3. Transformation en coût (Minimisation)
     p->score = -ll;
 
     // 4. Barrière Logarithmique Soft
     double barrier_weight = 100.0;
-    for(int src=0; src<N_WS; src++) {
+    for(int src=0; src<n_dim; src++) {
         double a = p->values[OFF_ALPHA + src];
-        double b = p->values[OFF_BETA + src];
+        double b = p->values[off_beta + src];
         // On pénalise si on s'approche trop de alpha = beta
         p->score -= barrier_weight * log(b - a); 
     }
@@ -248,8 +258,8 @@ SimplexPoint* nelder_mead_optim(
         LL_params *ll_params, // On reçoit le pointeur, on ne l'alloue pas !
         int target_dim) {
             
-    int n_params = N_PARAMS_PER_DIM;
-    
+    int n_params = N_PARAMS_FOR_DIM(conf.n_dim);
+
     // Init points avec contraintes corrigées
     Simplex* simplex = init_points(conf.bounds, n_params);
     
@@ -337,8 +347,12 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
     // printf("\n (Tmax %lf, t:%d) \n", history->T_max, history->total_events);
     // Allocations Globales
 
+    // Dimension du processus, passée à l'exécution (remplace la constante N_WS).
+    int n_dim = conf->n_dim;
+    int off_beta = 1 + n_dim;
+
     // Définition des bornes pour chaque paramètre (Mu, Alpha_i, Beta_i)
-    int n_params_local = 1 + 2 * N_WS;
+    int n_params_local = N_PARAMS_FOR_DIM(n_dim);
     conf->bounds = malloc(n_params_local * sizeof(param_bounds));
     conf->bounds[0].min = 0.01; conf->bounds[0].max = 2.0; // Mu
     for(int i=1; i<n_params_local; i++) { // Alpha & Beta
@@ -346,33 +360,33 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
     }
 
     ModelParams* global_model = malloc(sizeof(ModelParams));
-    global_model->n_dim = N_WS;
-    global_model->mu    = malloc(N_WS * sizeof(double));
-    global_model->alpha = malloc(N_WS * N_WS * sizeof(double)); // Matrice aplatie
-    global_model->beta  = malloc(N_WS * N_WS * sizeof(double)); // Matrice aplatie
-    global_model->phi   = calloc(N_WS * N_WS, sizeof(double)); // Vecteur pour le calcul de l'intensité et du compensateur
+    global_model->n_dim = n_dim;
+    global_model->mu    = malloc(n_dim * sizeof(double));
+    global_model->alpha = malloc(n_dim * n_dim * sizeof(double)); // Matrice aplatie
+    global_model->beta  = malloc(n_dim * n_dim * sizeof(double)); // Matrice aplatie
+    global_model->phi   = calloc(n_dim * n_dim, sizeof(double)); // Vecteur pour le calcul de l'intensité et du compensateur
 
     // Buffer réutilisable pour éviter malloc dans la boucle
-    LL_params* ll_params = init_ll_params(); 
+    LL_params* ll_params = init_ll_params(n_dim);
 
     // Boucle d'Optimisation (Dimension par Dimension)
-    for (int k = 0; k < N_WS; k++) {
-        printf("Optimisation Dimension %d / %d ...\n", k+1, N_WS);
-        
+    for (int k = 0; k < n_dim; k++) {
+        printf("Optimisation Dimension %d / %d ...\n", k+1, n_dim);
+
         // Lancement Optim
         SimplexPoint* res = nelder_mead_optim(history, *conf, ll_params, k);
 
         // Sauvegarde dans la structure globale
         // 1. Mu
         global_model->mu[k] = res->values[OFF_MU];
-        
+
         // 2. Alpha et Beta (Lignes de la matrice)
-        for(int src = 0; src < N_WS; src++) {
+        for(int src = 0; src < n_dim; src++) {
             // L'index dans la matrice globale est : ligne(k) * largeur + colonne(src)
-            int global_idx = k * N_WS + src;
-            
+            int global_idx = k * n_dim + src;
+
             global_model->alpha[global_idx] = res->values[OFF_ALPHA + src];
-            global_model->beta[global_idx]  = res->values[OFF_BETA + src];
+            global_model->beta[global_idx]  = res->values[off_beta + src];
         }
 
         free_simplexpoint(res);
@@ -380,11 +394,12 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
 
     for (int k = 0; k < history->total_events; k++) {
         int src = history->events[k].type;
-        for (int i = 0; i < N_WS; i++) {
-            global_model->phi[src * N_WS + i] += exp(-global_model->beta[i * N_WS + src] * (history->T_max - history->events[k].time));
+        if (src < 0 || src >= n_dim) continue; // Ignore les types hors dimension
+        for (int i = 0; i < n_dim; i++) {
+            global_model->phi[src * n_dim + i] += exp(-global_model->beta[i * n_dim + src] * (history->T_max - history->events[k].time));
         }
     }
-    
+
     free_ll_params(ll_params);
     return global_model;
 }
@@ -419,6 +434,7 @@ void python_entry_point(
     NelderMeadConfig conf;
     conf.max_iter = 2000;
     conf.rho = 1.0; conf.chi = 2.0; conf.psi = 0.5; conf.sigma = 0.5;
+    conf.n_dim = n_ws; // Dimension du processus fournie par l'appelant
 
     // 3. Lancer l'optimisation
     ModelParams* res = hawkes_model_optim(&h, &conf);

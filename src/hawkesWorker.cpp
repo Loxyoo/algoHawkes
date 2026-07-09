@@ -475,6 +475,7 @@ HawkesOptimizer::HawkesOptimizer(
     this->optimizerConfig.chi = 2.0;
     this->optimizerConfig.psi = 0.5;
     this->optimizerConfig.sigma = 0.5;
+    this->optimizerConfig.n_dim = n_websockets; // Dimension runtime propagée à l'optimiseur C
 
     this->n_websockets = n_websockets;
 

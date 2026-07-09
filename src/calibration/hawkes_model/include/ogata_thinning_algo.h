@@ -20,4 +20,15 @@ double multi_intensity(double u, History* h, int target_dim, OgataParams* op);
 // --- Simulation Ogata Généralisée ---
 void multivariate_ogata_sim(OgataParams* op, History* result);
 
+// Simulation Ogata en temps réel
+/**
+ * @brief Simule en temps réel un processus de Hawkes multivarié avec l'algorithme
+ *        d'amincissement d'Ogata. Chaque événement accepté au temps de simulation s
+ *        est ajouté à l'historique quand wall_clock - t_start >= s.
+ *
+ * @param op     Paramètres du processus de Hawkes multivarié
+ * @param result Historique rempli au fil de l'eau, au rythme wall-clock
+ */
+void real_time_multivariate_ogata_sim(OgataParams* op, History* result);
+
 #endif
