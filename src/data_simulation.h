@@ -28,6 +28,7 @@ typedef struct {
     double* mu;         // Tableau 1D de taille D
     double* alpha;      // Matrice aplatie 1D de taille D*D
     double* beta;       // Matrice aplatie 1D de taille D*D (ou vecteur D si beta ne dépend que de la cible)
+    double* branching_matrix;
     double T_max;
 } SimOgataParams;
 

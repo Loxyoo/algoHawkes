@@ -159,8 +159,12 @@ int main(int argc, char** argv) {
     std::vector<std::thread> ogata_sim_threads;
     ogata_sim_threads.reserve(n_symbols);
 
+    // On enregistre les paramètres de simulations
+    std::vector<SimOgataParams> all_OgataParams;
+    all_OgataParams.reserve(n_symbols);
+
     for (int i = 0; i < n_symbols; i++) {
-        ogata_sim_threads.emplace_back([&shared_queue, &symbols, dimensions, T, time_scale, i]() {
+        ogata_sim_threads.emplace_back([&shared_queue, &symbols, dimensions, T, time_scale, i, &all_OgataParams]() {
             std::cout << "Launching simulation for " << symbols[i]
                       << " (time_scale=" << time_scale << "x)..." << std::endl;
 
@@ -171,6 +175,7 @@ int main(int argc, char** argv) {
 
             SimOgataParams params;
             sim_init_params(&params, dimensions, T);
+            all_OgataParams.emplace_back(params);
             real_time_multivariate_ogata_sim(shared_queue, &params, &history, time_scale);
 
             sim_free_params(&params);
@@ -206,6 +211,7 @@ int main(int argc, char** argv) {
     DefaultParameters::websockets.insert(DefaultParameters::websockets.end(), member_names.begin(), member_names.end());
 
     DefaultParameters::default_symbol = symbols[0];
+    DefaultParameters::all_OgataParams = all_OgataParams;
     // Démarrage du scheduler dans un thread séparé pour permettre à l'interface utilisateur de fonctionner en parallèle
     std::thread scheduler_thread([&scheduler](){
         scheduler.run();

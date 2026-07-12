@@ -4,6 +4,10 @@
 namespace DefaultParameters {
     std::vector<std::string> websockets = {"All", "Binance", "Coinbase", "Kraken", "Bybit", "OKX"};
     std::string default_symbol = "BTCUSD";
+    std::vector<bool> is_symbol_selected; // Redimensionné dans le constructeur de UserInterface
+#ifdef STRESS_TEST
+    std::vector<SimOgataParams> all_OgataParams; // Rempli dans main.cpp après la simulation
+#endif
 }
 
 static void glfw_error_callback(int error, const char* description) {
@@ -13,13 +17,17 @@ static void glfw_error_callback(int error, const char* description) {
 UserInterface::UserInterface(SchedulerConfig& config, TelemetryManager& telemetry_manager)
     : config(config), telemetry_manager(telemetry_manager)
 {
-    // Pré-alloue un vecteur de buffers vide pour chaque symbole connu
-    for (const std::string& symbol : config.symbols) {
-        all_buffers[symbol] = std::vector<ScrollingBuffer>();
-    }
-    this->is_symbol_selected.resize(config.symbols.size(), false);
+    DefaultParameters::is_symbol_selected.resize(config.symbols.size(), false);
     // Active le symbole par défaut à l'ouverture
-    this->is_symbol_selected[config.symbols_map[DefaultParameters::default_symbol].asInt()] = true;
+    DefaultParameters::is_symbol_selected[config.symbols_map[DefaultParameters::default_symbol].asInt()] = true;
+
+    this->panels = create_default_panels_v2(config, telemetry_manager);
+}
+
+UserInterface::~UserInterface() {
+    for (UI_Panel* panel : this->panels) {
+        delete panel;
+    }
 }
 
 void UserInterface::ApplyBloombergStyle() {
@@ -161,7 +169,7 @@ int UserInterface::initialize() {
     return 0;
 }
 
-void UserInterface::render_main_bar() {
+void ControlPanel::render_main_bar() {
     if (ImGui::BeginMainMenuBar()) {
         // Affiche le nom du modèle sélectionné
         // Ajout d'un petit cadre autour du nom du modèle pour le mettre en évidence
@@ -170,19 +178,29 @@ void UserInterface::render_main_bar() {
 
         // Déroulé pour sélectionner un symbole parmi ceux disponibles
         static int selected_symbol = 0;
-        std::vector<const char*> labels;
-        for (auto& s : config.symbols) labels.push_back(s.c_str());
+        std::vector<const char*> symbol_labels;
+        for (auto& s : config.symbols) symbol_labels.push_back(s.c_str());
         ImGui::SetNextItemWidth(150);
-        ImGui::Combo("Symbole##qq", &selected_symbol, labels.data(), (int)labels.size());
+        ImGui::Combo("Symbole##qq", &selected_symbol, symbol_labels.data(), (int)symbol_labels.size());
 
-        if (!is_symbol_selected[selected_symbol]) {
-            for (size_t i = 0; i < is_symbol_selected.size(); ++i) {
-                is_symbol_selected[i] = false;
+        if (!DefaultParameters::is_symbol_selected[selected_symbol]) {
+            for (size_t i = 0; i < DefaultParameters::is_symbol_selected.size(); ++i) {
+                DefaultParameters::is_symbol_selected[i] = false;
             }
-            is_symbol_selected[selected_symbol] = true;
+            DefaultParameters::is_symbol_selected[selected_symbol] = true;
         }
         
         this->current_symbol_index = selected_symbol;
+
+        ImGui::SameLine();
+        // Déroulé pour affiché les websockets
+        static int current_websocket = 0;
+        std::vector<const char*> ws_items;
+        ws_items.reserve(DefaultParameters::websockets.size());
+        for (const std::string& ws : DefaultParameters::websockets) ws_items.push_back(ws.c_str());
+        ImGui::SetNextItemWidth(150);
+        ImGui::Combo("Websocket##Combo", &current_websocket, ws_items.data(), (int)ws_items.size());
+
 
         ImGui::SameLine();
         // Affiche les websockets actifs
@@ -208,15 +226,20 @@ void UserInterface::render_main_bar() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Selector Bar — barre fixée tout en haut (exchange, modèle, symbole)
-// ---------------------------------------------------------------------------
-void UserInterface::render_selector_bar() {
+// Command Bar — barre fixée tout en haut (exchange, modèle, symbole)
+void ControlPanel::render_command_bar() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
 
-    float selector_bar_height = ImGui::GetFrameHeight() + 8.0f;
-    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, selector_bar_height));
+    float command_bar_height = ImGui::GetFrameHeight() + 8.0f;
+    // Ancre la barre en bas de la zone de travail : coin bas-gauche décalé vers le haut
+    // de sa propre hauteur.
+    ImVec2 command_bar_pos(viewport->WorkPos.x,
+                           viewport->WorkPos.y + viewport->WorkSize.y - command_bar_height);
+    ImGui::SetNextWindowPos(command_bar_pos);
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, command_bar_height));
+    // Multi-viewport activé : ancre la barre dans le viewport principal pour l'empêcher
+    // de se détacher dans sa propre fenêtre OS et de perdre son positionnement.
+    ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration |
                                     ImGuiWindowFlags_NoMove |
@@ -225,32 +248,11 @@ void UserInterface::render_selector_bar() {
                                     ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoDocking;
 
-    ImGui::Begin("Selector Bar", NULL, window_flags);
+    ImGui::Begin("Command Bar", NULL, window_flags);
 
-    static int current_websocket = 0;
-    static int current_model     = 0;
-    static char symbol[32]       = "";
+    static char command_bar[32] = "";
 
-    // Répartit les 3 widgets sur toute la largeur disponible avec espacement uniforme
-    float spacing       = ImGui::GetStyle().ItemSpacing.x;
-    float available_width = ImGui::GetContentRegionAvail().x;
-    float item_width    = (available_width - (spacing * 2.0f)) / 3.0f;
-
-    ImGui::SetNextItemWidth(item_width);
-    // ImGui::Combo attend un tableau de const char* : on projette le vecteur de std::string.
-    std::vector<const char*> ws_items;
-    ws_items.reserve(DefaultParameters::websockets.size());
-    for (const std::string& ws : DefaultParameters::websockets) ws_items.push_back(ws.c_str());
-    ImGui::Combo("##combo", &current_websocket, ws_items.data(), (int)ws_items.size());
-
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(item_width);
-    ImGui::Combo("##Models", &current_model, DefaultParameters::models, IM_ARRAYSIZE(DefaultParameters::models));
-
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(item_width);
-    // CharsUppercase force la saisie en majuscules pour être cohérent avec les symboles de marché
-    ImGui::InputText("##Symbols", symbol, IM_ARRAYSIZE(symbol), ImGuiInputTextFlags_CharsUppercase);
+    ImGui::InputText("##Symbols", command_bar, IM_ARRAYSIZE(command_bar));
 
     ImGui::End();
 }
@@ -376,7 +378,7 @@ struct ExampleAppLog
     }
 };
 
-void UserInterface::render_log_panel() {
+void LogPanel::render() {
     static ExampleAppLog log; // Instance statique unique — persiste entre les frames
     log.Draw("Example: Log");
 }
@@ -384,7 +386,7 @@ void UserInterface::render_log_panel() {
 // ---------------------------------------------------------------------------
 // Control Panel — contrôles Hawkes : workers, calibration, entraînement, symboles
 // ---------------------------------------------------------------------------
-void UserInterface::render_control_panel() {
+void ControlPanel::render_control_panel() {
     ImGui::Begin("Control Panel");
 
     static ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_DrawLinesFull | ImGuiTreeNodeFlags_DefaultOpen;
@@ -463,9 +465,13 @@ void UserInterface::render_control_panel() {
     ImGui::End();
 }
 
-void UserInterface::update_hawkes_models() {
-    // TODO: appliquer les mises à jour de paramètres déclenchées depuis l'UI
+// Point d'entrée polymorphe du panneau de contrôle (appelé par UI_renderer).
+void ControlPanel::render() {
+    render_main_bar();
+    render_command_bar();
+    render_control_panel();
 }
+
 
 // ---------------------------------------------------------------------------
 // Title Bar — barre fixe sous la selector bar avec horloge temps réel
@@ -512,24 +518,27 @@ void UserInterface::render_title_bar() {
 // ---------------------------------------------------------------------------
 // Symbol Selector — arborescence de sélection multiple des symboles
 // ---------------------------------------------------------------------------
-void UserInterface::render_symbol_selector() {
+void ControlPanel::render_symbol_selector() {
     if (ImGui::TreeNode("Symbols"))
     {
         for (int i = 0; i < (int)config.symbols.size(); i++) {
             // Selectable avec état persistant dans is_symbol_selected
-            if (ImGui::Selectable(config.symbols[i].c_str(), is_symbol_selected[i])) {
-                is_symbol_selected[i] = !is_symbol_selected[i];
+            if (ImGui::Selectable(config.symbols[i].c_str(), DefaultParameters::is_symbol_selected[i])) {
+                DefaultParameters::is_symbol_selected[i] = !DefaultParameters::is_symbol_selected[i];
             }
         }
         ImGui::TreePop();
     }
 }
 
-// ---------------------------------------------------------------------------
+// ######################################################################
+// PANEL ANALYTICS - PANEL ANALYTICS - PANEL ANALYTICS
+// ######################################################################
+
+
 // Met à jour les buffers : un point par exchange, pour chaque symbole sélectionné.
 // À appeler UNE fois par frame, AVANT le rendu des graphiques.
-// ---------------------------------------------------------------------------
-void UserInterface::update_intensity_buffers() {
+void AnalyticsPanel::update_intensity_buffers() {
     float t_render = (float)ImGui::GetTime();
 
     // Rescan complet toutes les ~120 frames pour corriger le max quand l'ancien maximum
@@ -539,7 +548,7 @@ void UserInterface::update_intensity_buffers() {
     float t_min_visible = t_render - intensity_history;
 
     for (int i = 0; i < (int)config.symbols.size(); i++) {
-        if (!is_symbol_selected[i])
+        if (!DefaultParameters::is_symbol_selected[i])
             continue;
 
         auto snap = telemetry_manager.get_snapshot(i);
@@ -572,10 +581,8 @@ void UserInterface::update_intensity_buffers() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Graphique compact d'un seul exchange (une "ligne" du panneau de gauche).
-// ---------------------------------------------------------------------------
-void UserInterface::render_exchange_strip(int source_idx) {
+void AnalyticsPanel::render_exchange_strip(int source_idx) {
     const ImVec4 col = ImPlot::GetColormapColor(source_idx);
     const char* ws_name = DefaultParameters::websockets[source_idx + 1].c_str();
 
@@ -590,7 +597,7 @@ void UserInterface::render_exchange_strip(int source_idx) {
     // Calcule le max visible sur tous les symboles sélectionnés pour cet exchange — O(1)
     float auto_y_max = 0.0f;
     for (int i = 0; i < (int)config.symbols.size(); i++) {
-        if (!is_symbol_selected[i]) continue;
+        if (!DefaultParameters::is_symbol_selected[i]) continue;
         auto it = all_buf_max.find(config.symbols[i]);
         if (it == all_buf_max.end()) continue;
         if (source_idx < (int)it->second.size())
@@ -608,7 +615,7 @@ void UserInterface::render_exchange_strip(int source_idx) {
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, auto_y_max, ImGuiCond_Always);
 
         for (int i = 0; i < (int)config.symbols.size(); i++) {
-            if (!is_symbol_selected[i]) continue;
+            if (!DefaultParameters::is_symbol_selected[i]) continue;
             const std::string& sym = config.symbols[i];
             auto& bufs = all_buffers[sym];
             if (source_idx >= (int)bufs.size()) continue;
@@ -627,11 +634,8 @@ void UserInterface::render_exchange_strip(int source_idx) {
     }
 }
 
-
-// ---------------------------------------------------------------------------
-// Panneau "intensités" — empile une bande compacte par exchange (style mockup).
-// ---------------------------------------------------------------------------
-void UserInterface::render_intensities_plot() {
+// Panneau "intensités" — empile une bande compacte par exchange.
+void AnalyticsPanel::render_intensities_plot() {
     update_intensity_buffers();  // mise à jour des buffers une seule fois
 
     ImGui::Begin("Hawkes Intensities");
@@ -650,10 +654,8 @@ void UserInterface::render_intensities_plot() {
     ImGui::End();
 }
 
-// ---------------------------------------------------------------------------
 // QQ Plot — résidus du compensateur de Hawkes vs Exp(1) théorique
-// ---------------------------------------------------------------------------
-void UserInterface::render_qq_plot() {
+void AnalyticsPanel::render_qq_plot() {
     ImGui::Begin("QQ Plot — Résidus Hawkes");
 
     auto snap = telemetry_manager.get_residuals_snapshot(this->current_symbol_index);
@@ -738,10 +740,9 @@ void UserInterface::render_qq_plot() {
     ImGui::End();
 }
 
-void UserInterface::render_branching_matrix() {
+void AnalyticsPanel::render_branching_matrix(std::vector<double> branching_matrix) {
     ImGui::Begin("Branching Matrix");
 
-    std::vector<double> branching_matrix = telemetry_manager.get_parameters_snapshot(this->current_symbol_index).branching_matrix;
     std::vector<std::string> members = config.websocket_map.getMemberNames();
     int n = (int)members.size();
 
@@ -779,8 +780,19 @@ void UserInterface::render_branching_matrix() {
     ImGui::End();
 }
 
-void UserInterface::render_ticker() {
-
+void AnalyticsPanel::render() {
+    std::vector<double> branching_matrix = telemetry_manager.get_parameters_snapshot(this->current_symbol_index).branching_matrix;
+    this->render_branching_matrix(branching_matrix);
+    this->render_intensities_plot();
+    this->render_qq_plot();
+    #ifdef STRESS_TEST
+    const auto& params = DefaultParameters::all_OgataParams[this->current_symbol_index];
+    std::vector<double> theo_branching_matrix(
+        params.branching_matrix,
+        params.branching_matrix + params.D * params.D
+    );
+    this->render_branching_matrix(theo_branching_matrix);
+    #endif
 }
 
 // void UserInterface::render_parameters_panel() {
@@ -848,7 +860,7 @@ int UserInterface::main_renderer() {
 
     bool show_demo_window = false;
 
-    double rate      = 1.0 / this->update_speed;
+    double rate      = 1.0 / DefaultParameters::UPDATE_SPEED;
     double last_time = glfwGetTime();
 
     while (true) {
@@ -865,15 +877,7 @@ int UserInterface::main_renderer() {
 
         if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
 
-        render_main_bar();
-        render_ticker();
-        render_intensities_plot();
-        render_branching_matrix();
-
-        update_hawkes_models();
-        render_log_panel();
-        render_control_panel();
-        render_qq_plot();
+        UI_renderer();  // Rendu des panels personnalisés
 
         // Rendu OpenGL
         ImGui::Render();
@@ -898,7 +902,7 @@ int UserInterface::main_renderer() {
         // --- Gestion précise du framerate ---
         // Stratégie : sleep OS jusqu'à ~1 ms avant l'échéance, puis busy-wait
         // pour absorber l'imprécision du scheduler OS sans surcharger le CPU.
-        rate = 1.0 / this->update_speed;
+        rate = 1.0 / DefaultParameters::UPDATE_SPEED;
         double target_time  = last_time + rate;
         double current_time = glfwGetTime();
 
@@ -928,4 +932,19 @@ int UserInterface::main_renderer() {
     glfwTerminate();
 
     return 0;
+}
+
+void UserInterface::UI_renderer() {
+    // Par polymorphisme
+    for (auto panel : this->panels) {
+        panel->render();
+    }
+}
+
+std::vector<UI_Panel*> create_default_panels_v2(SchedulerConfig& config, TelemetryManager& telemetry_manager) {
+    std::vector<UI_Panel*> panels;
+    panels.push_back(new ControlPanel(config, telemetry_manager));
+    panels.push_back(new AnalyticsPanel(config, telemetry_manager));
+    panels.push_back(new LogPanel(config, telemetry_manager));
+    return panels;
 }

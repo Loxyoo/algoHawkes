@@ -30,6 +30,7 @@ void sim_init_params(SimOgataParams* p, int dim, double T) {
     p->mu = new double[dim];
     p->alpha = new double[dim * dim];
     p->beta = new double[dim * dim];
+    p->branching_matrix = new double[dim * dim];
 
     printf("Initialisation des parametres HF pour D=%d...\n", dim);
 
@@ -48,6 +49,9 @@ void sim_init_params(SimOgataParams* p, int dim, double T) {
                 p->alpha[i * dim + j] = 0.0;
             }
         }
+    }
+    for (int i = 0; i < dim*dim; i++) {
+        p->branching_matrix[i] = p->alpha[i] / p->beta[i];
     }
 }
 
