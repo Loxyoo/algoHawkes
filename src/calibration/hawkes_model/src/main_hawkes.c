@@ -7,6 +7,13 @@
 #include "../include/optimization.h"
 
 // --- Main Généralisé ---
+// NOTE : ce test standalone utilise l'ANCIENNE API multi-dimensionnelle de
+// hawkes_model_optim (ModelParams avec mu/alpha/beta pleins). Depuis le passage
+// à l'optimisation dimension-par-dimension, il n'est plus compatible et doit être
+// réécrit (boucler sur target_dim). On le retire de la compilation par défaut pour
+// ne pas casser le build de MonApp (ce .c est ramassé par le GLOB_RECURSE du CMake).
+// Pour le rebâtir : compiler avec -DHAWKES_TEST_MAIN après mise à jour de l'appel.
+#ifdef HAWKES_TEST_MAIN
 int main_hawkes() {
     srand(time(NULL));
 
@@ -134,3 +141,4 @@ int main_hawkes() {
 
     return EXIT_SUCCESS;
 }
+#endif // HAWKES_TEST_MAIN

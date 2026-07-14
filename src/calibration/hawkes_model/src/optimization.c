@@ -339,13 +339,18 @@ static void display_vector(double* vec, int size, char* desc) {
     printf("\n");
 }
 
-ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
+ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf, int target_dim) {
     // printf("Affichage des events. \n");
     // for (int i = 0; i < history->total_events; i++) {
     //     printf("(%lf,%d)", history->events[i].time, history->events[i].type);
     // }
     // printf("\n (Tmax %lf, t:%d) \n", history->T_max, history->total_events);
     // Allocations Globales
+
+    if (target_dim < 0 || target_dim >= conf->n_dim) {
+        fprintf(stderr, "Error: target_dim is out of bounds.\n");
+        return NULL;
+    }
 
     // Dimension du processus, passée à l'exécution (remplace la constante N_WS).
     int n_dim = conf->n_dim;
@@ -361,49 +366,47 @@ ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf) {
 
     ModelParams* global_model = malloc(sizeof(ModelParams));
     global_model->n_dim = n_dim;
-    global_model->mu    = malloc(n_dim * sizeof(double));
-    global_model->alpha = malloc(n_dim * n_dim * sizeof(double)); // Matrice aplatie
-    global_model->beta  = malloc(n_dim * n_dim * sizeof(double)); // Matrice aplatie
-    global_model->phi   = calloc(n_dim * n_dim, sizeof(double)); // Vecteur pour le calcul de l'intensité et du compensateur
+    global_model->target_dim = target_dim;
+    global_model->alpha = malloc(n_dim * sizeof(double)); // Matrice aplatie
+    global_model->beta  = malloc(n_dim * sizeof(double)); // Matrice aplatie
+    global_model->phi   = calloc(n_dim, sizeof(double)); // Vecteur pour le calcul de l'intensité et du compensateur
 
     // Buffer réutilisable pour éviter malloc dans la boucle
     LL_params* ll_params = init_ll_params(n_dim);
 
     // Boucle d'Optimisation (Dimension par Dimension)
-    for (int k = 0; k < n_dim; k++) {
-        printf("Optimisation Dimension %d / %d ...\n", k+1, n_dim);
+    printf("Optimisation for dimension %d / %d ...\n", target_dim + 1, n_dim);
 
-        // Lancement Optim
-        SimplexPoint* res = nelder_mead_optim(history, *conf, ll_params, k);
+    // Lancement Optim
+    SimplexPoint* res = nelder_mead_optim(history, *conf, ll_params, target_dim);
 
-        // Sauvegarde dans la structure globale
-        // 1. Mu
-        global_model->mu[k] = res->values[OFF_MU];
+    // Sauvegarde dans la structure globale
+    // Mu
+    global_model->mu = res->values[OFF_MU];
 
-        // 2. Alpha et Beta (Lignes de la matrice)
-        for(int src = 0; src < n_dim; src++) {
-            // L'index dans la matrice globale est : ligne(k) * largeur + colonne(src)
-            int global_idx = k * n_dim + src;
-
-            global_model->alpha[global_idx] = res->values[OFF_ALPHA + src];
-            global_model->beta[global_idx]  = res->values[off_beta + src];
-        }
-
-        free_simplexpoint(res);
+    // Alpha et Beta (Lignes de la matrice)
+    for(int src = 0; src < n_dim; src++) {
+        global_model->alpha[src] = res->values[OFF_ALPHA + src];
+        global_model->beta[src]  = res->values[off_beta + src];
     }
 
+    free_simplexpoint(res);
+
+    // phi est la ligne de la cible : phi[src] = influence décroissante cumulée de la source
+    // src sur target_dim à l'instant T_max. On accumule donc sur TOUS les événements (chaque
+    // source contribue à sa propre case), et non plus seulement sur src == target_dim.
     for (int k = 0; k < history->total_events; k++) {
         int src = history->events[k].type;
         if (src < 0 || src >= n_dim) continue; // Ignore les types hors dimension
-        for (int i = 0; i < n_dim; i++) {
-            global_model->phi[src * n_dim + i] += exp(-global_model->beta[i * n_dim + src] * (history->T_max - history->events[k].time));
-        }
+        global_model->phi[src] += exp(-global_model->beta[src] * (history->T_max - history->events[k].time));
     }
 
+    free(conf->bounds); // Bornes allouées en début de fonction : évite une fuite à chaque appel
     free_ll_params(ll_params);
     return global_model;
 }
 
+/*
 // Wrapper simplifié pour l'appel depuis Python
 // Python envoie des tableaux bruts (times, types) et reçoit les paramètres optimisés dans un tableau de sortie.
 void python_entry_point(
@@ -454,3 +457,4 @@ void python_entry_point(
     free(conf.bounds);
     free(res->mu); free(res->alpha); free(res->beta); free(res);
 }
+    */

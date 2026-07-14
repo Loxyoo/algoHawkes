@@ -64,7 +64,7 @@ SimplexPoint* nelder_mead_optim(
         NelderMeadConfig conf,
         LL_params *ll_params, // On reçoit le pointeur, on ne l'alloue pas !
         int target_dim);
-ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf);
+ModelParams* hawkes_model_optim(History* history, NelderMeadConfig* conf, int target_dim);
 
 #ifdef __cplusplus
 }

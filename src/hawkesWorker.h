@@ -18,8 +18,10 @@ using TimePoint = std::chrono::steady_clock::time_point;
 // Fonction qui permet la sauvegarde des paramètres optimisés pour les modèles de Hawkes
 void save_optimized_params(const std::string& filename, const opt_hawkesParams& params);
 
-// Fonction qui permet de charger les paramètres optimisés pour les modèles de Hawkes
-void load_optimized_params(const std::string& filename, opt_hawkesParams& params);
+// Fonction qui permet de charger les paramètres optimisés pour les modèles de Hawkes.
+// Renvoie false si le fichier est absent, obsolète (mauvais magic) ou corrompu :
+// dans ce cas params n'est pas exploitable et ne doit pas être injecté.
+bool load_optimized_params(const std::string& filename, opt_hawkesParams& params);
 
 class HawkesModel {
     protected:

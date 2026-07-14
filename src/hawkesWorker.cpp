@@ -3,8 +3,15 @@
 
 #include <cmath>
 #include <chrono>
+#include <cstdint>
 
 extern "C" void SystemLog(const char* fmt, ...);
+
+// Version du format binaire des paramètres optimisés. À incrémenter à chaque
+// changement de layout : un ancien fichier .bin est alors rejeté proprement par
+// load_optimized_params au lieu d'être mal interprété (lecture désalignée →
+// taille aberrante → resize géant / accès hors bornes → segfault).
+static const uint32_t PARAMS_FILE_MAGIC = 0x484B5032; // 'HKP2'
 
 // Remplace glfwGetTime() pour mesurer le temps écoulé depuis le démarrage du programme.
 // glfwGetTime() nécessite que GLFW soit initialisé au préalable, ce qui n'est pas garanti
@@ -26,11 +33,14 @@ static void write_vector(std::ofstream& f, const std::vector<double>& v) {
 
 // Désérialise un std::vector<double> depuis un flux binaire : lit la taille, redimensionne,
 // puis lit les données brutes. Symétrique de write_vector.
-static void read_vector(std::ifstream& f, std::vector<double>& v) {
+static bool read_vector(std::ifstream& f, std::vector<double>& v) {
     size_t n = 0;
     f.read(reinterpret_cast<char*>(&n), sizeof(n));
+    // Garde-fou : lecture échouée ou taille aberrante = fichier corrompu/incompatible.
+    if (!f || n > 100000) return false;
     v.resize(n);
     f.read(reinterpret_cast<char*>(v.data()), n * sizeof(double));
+    return static_cast<bool>(f);
 }
 
 // Sérialise manuellement chaque champ de opt_hawkesParams dans un fichier binaire.
@@ -44,15 +54,19 @@ void save_optimized_params(const std::string& filename, const opt_hawkesParams& 
         std::cerr << "Error opening file for writing: " << filename << std::endl;
         return;
     }
+    file.write(reinterpret_cast<const char*>(&PARAMS_FILE_MAGIC), sizeof(PARAMS_FILE_MAGIC));
     int status = static_cast<int>(params.status);
     file.write(reinterpret_cast<const char*>(&status), sizeof(status));
+    // target_dim identifie la dimension optimisée : les params ne concernent qu'une ligne.
+    file.write(reinterpret_cast<const char*>(&params.target_dim), sizeof(params.target_dim));
     size_t sym_len = params.symbol.size();
     file.write(reinterpret_cast<const char*>(&sym_len), sizeof(sym_len));
     file.write(params.symbol.data(), sym_len);
     write_vector(file, params.alpha);
     write_vector(file, params.beta);
-    write_vector(file, params.mu);
-    write_vector(file, params.phi);
+    // mu et phi sont désormais des scalaires (une valeur par dimension cible).
+    file.write(reinterpret_cast<const char*>(&params.mu), sizeof(params.mu));
+    file.write(reinterpret_cast<const char*>(&params.phi), sizeof(params.phi));
     file.close();
     std::cout << "Optimized parameters saved to " << filename << std::endl;
 }
@@ -60,25 +74,36 @@ void save_optimized_params(const std::string& filename, const opt_hawkesParams& 
 // Désérialise opt_hawkesParams depuis un fichier binaire. Doit rester synchrone avec
 // save_optimized_params : tout changement de format dans l'un invalide les fichiers
 // produits par l'autre.
-void load_optimized_params(const std::string& filename, opt_hawkesParams& params) {
+// Renvoie true seulement si le fichier a été lu ET qu'il correspond au format courant.
+// Un ancien fichier (mauvais magic) ou tronqué est rejeté sans planter : l'appelant
+// doit vérifier la valeur de retour avant d'utiliser params.
+bool load_optimized_params(const std::string& filename, opt_hawkesParams& params) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Error opening file for reading: " << filename << std::endl;
-        return;
+        return false;
+    }
+    uint32_t magic = 0;
+    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    if (!file || magic != PARAMS_FILE_MAGIC) {
+        std::cerr << "Fichier de paramètres incompatible ou obsolète, ignoré : " << filename << std::endl;
+        return false;
     }
     int status = 0;
     file.read(reinterpret_cast<char*>(&status), sizeof(status));
     params.status = static_cast<AlgoState>(status);
+    file.read(reinterpret_cast<char*>(&params.target_dim), sizeof(params.target_dim));
     size_t sym_len = 0;
     file.read(reinterpret_cast<char*>(&sym_len), sizeof(sym_len));
+    if (!file || sym_len > 4096) return false; // garde-fou anti-corruption
     params.symbol.resize(sym_len);
     file.read(params.symbol.data(), sym_len);
-    read_vector(file, params.alpha);
-    read_vector(file, params.beta);
-    read_vector(file, params.mu);
-    read_vector(file, params.phi);
-    file.close();
+    if (!read_vector(file, params.alpha)) return false;
+    if (!read_vector(file, params.beta)) return false;
+    file.read(reinterpret_cast<char*>(&params.mu), sizeof(params.mu));
+    if (!read_vector(file, params.phi)) return false;
     std::cout << "Optimized parameters loaded from " << filename << std::endl;
+    return static_cast<bool>(file);
 }
 
 // --------------------------
@@ -131,13 +156,28 @@ Worker::Worker(
         if (test.is_open() && test.tellg() > 0) {
             test.close();
             opt_hawkesParams params;
-            load_optimized_params(filename, params);
-            this->models[i].alpha = params.alpha;
-            this->models[i].beta  = params.beta;
-            this->models[i].mu    = params.mu;
-            this->models[i].phi   = params.phi;
-            // On met à jour le snapshot des paramètres optimisés dans le TelemetryManager pour que l'UI puisse les afficher dès le démarrage.
-            this->models[i].update_hawkes_params(params);
+            // Le fichier ne contient que les paramètres d'UNE dimension cible (la dernière
+            // optimisée avant l'arrêt). On ne l'injecte que s'il est lu correctement et
+            // dimensionné comme attendu (sinon on saute : évite tout accès hors bornes).
+            int n = this->workerParam->n_websockets;
+            if (load_optimized_params(filename, params)) {
+                int td = params.target_dim;
+                if (td >= 0 && td < n &&
+                    (int)params.alpha.size() == n &&
+                    (int)params.beta.size()  == n &&
+                    (int)params.phi.size()   == n) {
+                    for (int src = 0; src < n; src++) {
+                        // Convention du modèle : alpha/beta indexés [source*n + target],
+                        // phi indexé [target*n + source] (cf. compute_virtual_intensities).
+                        this->models[i].alpha[src * n + td] = params.alpha[src];
+                        this->models[i].beta[src * n + td]  = params.beta[src];
+                        this->models[i].phi[td * n + src]   = params.phi[src];
+                    }
+                    this->models[i].mu[td]  = params.mu;
+                    // On met à jour le snapshot des paramètres optimisés dans le TelemetryManager pour que l'UI puisse les afficher dès le démarrage.
+                    this->models[i].update_hawkes_params(params);
+                }
+            }
         }
     }
     SystemLog("Initialisation des WORKERS !");
@@ -183,17 +223,24 @@ void Worker::run() {
                 if (this->models[i].n_data > 10) {
 
                     std::cout << "Envoie de " << this->models[i].n_data << " données au worker d'optimisation..." << std::endl;
-                    // Envoie au worker HPC des nouvelles données recu pour le symbol associé au modèle
-                    // Copie profonde des événements pour éviter la race condition
-                    Event* events_copy = new Event[this->models[i].n_data];
-                    std::copy(this->models[i].buffer.begin(), this->models[i].buffer.end(), events_copy);
-                    
-                    History history;
-                    history.events = events_copy;
-                    history.total_events = this->models[i].n_data - 1;
-                    history.T_max = T_max;
-                    history.symbol = this->workerParam->assets[i].data();
-                    this->opt_input_queue.push(history);
+                    // Boucle temporaire : une optimisation par dimension cible.
+                    // IMPORTANT : chaque History poussée doit posséder SA PROPRE copie profonde
+                    // des événements. Le worker d'optimisation fait un delete[] sur history.events
+                    // après CHAQUE paquet ; partager un même buffer entre les n dimensions
+                    // provoquerait un double free / use-after-free. La copie évite aussi la
+                    // race condition avec le buffer du modèle mis à jour en temps réel.
+                    for (int dim = 0; dim < this->workerParam->n_websockets; dim++) {
+                        Event* events_copy = new Event[this->models[i].n_data];
+                        std::copy(this->models[i].buffer.begin(), this->models[i].buffer.end(), events_copy);
+
+                        History history;
+                        history.events = events_copy;
+                        history.total_events = this->models[i].n_data - 1;
+                        history.T_max = T_max;
+                        history.symbol = this->workerParam->assets[i].data();
+                        history.target_dim = dim;
+                        this->opt_input_queue.push(history);
+                    }
                 } else {
                     std::cout << "Not enough data to optimize." << std::endl;
                 }
@@ -214,10 +261,17 @@ void Worker::run() {
 
                 // Diffusion des nouveaux paramètres
                 int index = this->target_symbol_id[new_params.symbol].asInt();
-                this->models[index].alpha   = new_params.alpha;
-                this->models[index].beta    = new_params.beta;
-                this->models[index].mu      = new_params.mu;
-                this->models[index].phi     = new_params.phi;
+                // new_params ne contient que les paramètres optimisés pour UNE dimension cible.
+                // Convention du modèle (cf. compute_virtual_intensities / residuals_analysis) :
+                //   alpha/beta indexés [source*n + target], phi indexé [target*n + source].
+                int n = this->workerParam->n_websockets;
+                int td = new_params.target_dim;
+                for (int src = 0; src < n; src++) {
+                    this->models[index].alpha[src * n + td] = new_params.alpha[src];
+                    this->models[index].beta[src * n + td]  = new_params.beta[src];
+                    this->models[index].phi[td * n + src]   = new_params.phi[src];
+                }
+                this->models[index].mu[td]      = new_params.mu;
 
                 // Envoie des nouveaux paramètres optimisés à l'UI pour affichage
                 this->models[index].update_hawkes_params(new_params);
@@ -496,20 +550,34 @@ void HawkesOptimizer::run() {
     while (true) {
         History history;
         while (this->opt_input_queue.try_pop(history)) {
-            ModelParams *params = hawkes_model_optim(&history, &this->optimizerConfig);
+            ModelParams *params = hawkes_model_optim(&history, &this->optimizerConfig, history.target_dim);
+            if (params == nullptr) {
+                // target_dim hors bornes : hawkes_model_optim a renvoyé NULL. On ignore
+                // ce paquet et on libère les événements copiés pour ne pas fuir.
+                std::cerr << "Optimisation ignorée : target_dim invalide (" << history.target_dim << ")." << std::endl;
+                delete[] history.events;
+                continue;
+            }
             std::cout << "Lancement de l'optimisation de Nelder-Mead" << std::endl;
             // Adaptation des données recu pour le code c++
             // /!\ On copie juste les données
             // Comme la tailles des listes recu sont de taille fixe, la complexité est considéré constante ici.
             opt_hawkesParams formated_output_params;
-            int n_matrix_elements = this->n_websockets * this->n_websockets;
-            formated_output_params.alpha.assign(params->alpha, params->alpha + n_matrix_elements);
-            formated_output_params.beta.assign(params->beta, params->beta + n_matrix_elements);
-            formated_output_params.mu.assign(params->mu, params->mu + this->n_websockets);
-            formated_output_params.phi.assign(params->phi, params->phi + n_matrix_elements);
+            formated_output_params.alpha.assign(params->alpha, params->alpha + this->n_websockets);
+            formated_output_params.beta.assign(params->beta, params->beta + this->n_websockets);
+            formated_output_params.mu = params->mu; // Copie directe du double
+            formated_output_params.phi.assign(params->phi, params->phi + this->n_websockets);
             // Pour le moment le status est OK, mais voir pour d'autre conditions pour envoyer des cas d'erreur ou de problème.
             formated_output_params.status = OK;
             formated_output_params.symbol = history.symbol; // Associe le symbol du modèle
+            formated_output_params.target_dim = params->target_dim; // Associe la dimension optimisée
+
+            // Les données sont copiées dans formated_output_params : on libère la structure C
+            // (allouée à chaque appel de hawkes_model_optim, une fois par dimension cible).
+            free(params->alpha);
+            free(params->beta);
+            free(params->phi);
+            free(params);
 
             delete[] history.events; // Libère la mémoire alloué pour les événements du history
             // Push dans la queue thread safe qui lie ce worker aux autres worker gérant les modèles

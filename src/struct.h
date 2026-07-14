@@ -88,9 +88,10 @@ typedef enum {
 typedef struct {
     std::string symbol; // Nom du symbol
     AlgoState status; // Status de l'algorithme d'optimisation
+    int target_dim; // Dimension cible pour l'optimisation (0 à n_dim-1)
     std::vector<double> alpha; // Les paramètres de forces
     std::vector<double> beta; // Les paramètres d'oublis
-    std::vector<double> mu; // Les intensités de fond
+    double mu; // Les intensités de fond
     std::vector<double> phi; // Nouveau phi ajuster avec les nouveaux paramètres pour calculer l'intensité et le compensateur de Hawkes.
 } opt_hawkesParams;
 

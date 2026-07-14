@@ -17,6 +17,7 @@ typedef struct {
     int capacity;
     int total_events;
     double T_max;
+    int target_dim; // Dimension cible pour l'optimisation (0 à n_dim-1)
 } History;
 
 typedef struct {
@@ -45,12 +46,13 @@ typedef struct {
 // Structures de données
 typedef struct {
     int n_dim; 
+    int target_dim;
     int status;
     char* symbol;         
+    double* phi;        // Vecteur D pour le calcul de l'intensité et du compensateur
+    double mu;         // Vecteur D
     double* alpha;      // Matrice D*D
     double* beta;       // Matrice D*D
-    double* mu;         // Vecteur D
-    double* phi;        // Vecteur D ajusté pour le calcul de l'intensité et du compensateur
 } ModelParams;
 
 typedef struct {
