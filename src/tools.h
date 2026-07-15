@@ -110,6 +110,7 @@ class TelemetryManager {
 
         struct ResidualsSnapshot {
             std::vector<std::vector<double>> residuals_by_source; // un vecteur par source (source_idx)
+            std::vector<std::vector<double>> ewma_by_source; // série temporelle de l'EWMA des résidus, par source (alignée sur residuals_by_source)
             std::string symbol;
         };
 
@@ -145,20 +146,28 @@ class TelemetryManager {
             live_data[symbol_index].symbol      = symbols[symbol_index];
         }
 
-        // Appelé par les workers — ajoute un résidu dans le bucket de la source concernée
-        void update_residuals_analysis(int symbol_index, int source_idx, double residual) {
+        // Appelé par les workers — ajoute un résidu et la valeur d'EWMA associée dans le bucket de la source concernée
+        void update_residuals_analysis(int symbol_index, int source_idx, double residual, double ewma) {
             if (symbol_index < 0 || symbol_index >= (int)live_data.size()) return;
             if (residual <= 0.0) return;
             std::unique_lock lock(*mutexes[symbol_index]);
             auto& sources = residuals_data[symbol_index].residuals_by_source;
+            auto& ewma_sources = residuals_data[symbol_index].ewma_by_source;
             if (source_idx >= (int)sources.size())
                 sources.resize(source_idx + 1);
+            if (source_idx >= (int)ewma_sources.size())
+                ewma_sources.resize(source_idx + 1);
             auto& vec = sources[source_idx];
+            auto& ewma_vec = ewma_sources[source_idx];
             vec.push_back(residual);
-            // Élagage peu fréquent : ne se déclenche que tous les MAX_RESIDUALS points
+            ewma_vec.push_back(ewma);
+            // Élagage peu fréquent : ne se déclenche que tous les MAX_RESIDUALS points.
+            // Les deux vecteurs grandissent en phase, on les élague donc ensemble pour rester alignés.
             static const size_t MAX_RESIDUALS = 5000;
-            if (vec.size() > 2 * MAX_RESIDUALS)
+            if (vec.size() > 2 * MAX_RESIDUALS) {
                 vec.erase(vec.begin(), vec.begin() + (int)(vec.size() - MAX_RESIDUALS));
+                ewma_vec.erase(ewma_vec.begin(), ewma_vec.begin() + (int)(ewma_vec.size() - MAX_RESIDUALS));
+            }
         }
 
         void update_parameters_snapshot(int symbol_index, const opt_hawkesParams& params, const std::vector<double>& branching_matrix) {

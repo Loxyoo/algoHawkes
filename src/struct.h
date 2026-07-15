@@ -95,4 +95,9 @@ typedef struct {
     std::vector<double> phi; // Nouveau phi ajuster avec les nouveaux paramètres pour calculer l'intensité et le compensateur de Hawkes.
 } opt_hawkesParams;
 
+typedef struct {
+    std::vector<double> residuals;
+    int current_index; // Index du prochain résidu à écrire dans le buffer circulaire
+} residual_circular_buffer;
+
 #endif // STRUCT_H

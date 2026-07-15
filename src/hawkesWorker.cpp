@@ -350,6 +350,10 @@ HawkesModel::HawkesModel(
 
     this->compensator.assign(this->n_websockets, 0.0);
 
+    // EWMA des résidus : une valeur par source, non amorcée tant qu'aucun résidu calibré n'est arrivé
+    this->ewma_residuals.assign(this->n_websockets, 0.0);
+    this->ewma_initialized.assign(this->n_websockets, false);
+
     this->branching_matrix.assign(x, 0.0); // Initialisation de la matrice de branchement à zéro
 }
 
@@ -483,14 +487,24 @@ void HawkesModel::residuals_analysis(normalized_data data) {
     }
     this->compensator[source_idx] += diff_compensator;
 
-    // Mise à jour de l'exponentially weighted moving average (EWMA) des résidus
-    this->ewma_residuals = (1 - ewma_alpha) * ewma_residuals + ewma_alpha * diff_compensator;
-
-    // N'envoie les résidus à la télémétrie qu'après calibration (au moins un β > 0)
+    // N'exploite les résidus qu'après calibration (au moins un β > 0) : avant, les
+    // paramètres sont nuls et le compensateur n'a pas de signification statistique.
     bool calibrated = std::any_of(this->beta.begin(), this->beta.end(),
                                   [](double b){ return b > 1e-10; });
     if (calibrated && diff_compensator > 0.0) {
-        this->telemetry_manager.update_residuals_analysis(this->symbol_id, source_idx, diff_compensator);
+        // Mise à jour incrémentale de l'EWMA des résidus pour la source concernée.
+        // Pour un modèle bien ajusté, les résidus suivent une loi Exp(1) (moyenne 1) :
+        // l'EWMA offre une lecture temps réel de la qualité du modèle, censée osciller
+        // autour de 1. On l'amorce sur le premier résidu observé pour éviter le biais
+        // initial vers 0 d'une EWMA partant de zéro.
+        double& ewma = this->ewma_residuals[source_idx];
+        if (!this->ewma_initialized[source_idx]) {
+            ewma = diff_compensator;
+            this->ewma_initialized[source_idx] = true;
+        } else {
+            ewma = (1.0 - this->ewma_alpha) * ewma + this->ewma_alpha * diff_compensator;
+        }
+        this->telemetry_manager.update_residuals_analysis(this->symbol_id, source_idx, diff_compensator, ewma);
     }
 }
 

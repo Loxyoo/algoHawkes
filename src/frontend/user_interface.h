@@ -202,6 +202,10 @@ class ControlPanel : public Hawkes_Panel {
         /// Panneau latéral de contrôle : paramètres Hawkes, calibration, entraînement, symboles.
         void render_control_panel();
 
+        /// Graphique temps réel de l'EWMA des résidus du compensateur de Hawkes (une courbe par source).
+        /// Métrique de qualité du modèle : elle doit osciller autour de 1 (résidus ~ Exp(1)).
+        void render_residuals_ewma();
+
         /// Affiche la top bar avec le nom du modèle et l'horloge temps réel (coin droit). Un bouton kill switch est prévu pour arrêter le scheduler. Les websockets actifs et un déroulé pour sélectionner un symbole sont également affichés.
         void render_main_bar();
 

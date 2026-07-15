@@ -23,6 +23,7 @@ void save_optimized_params(const std::string& filename, const opt_hawkesParams& 
 // dans ce cas params n'est pas exploitable et ne doit pas être injecté.
 bool load_optimized_params(const std::string& filename, opt_hawkesParams& params);
 
+
 class HawkesModel {
     protected:
         int worker_id; // Identifiant du worker
@@ -37,6 +38,7 @@ class HawkesModel {
         int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
         double last_global_time; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
         std::vector<double> branching_matrix; // Matrice de branchement pour modéliser les interactions entre websockets
+        std::vector<residual_circular_buffer> residual_buffers; // Buffers circulaires pour stocker les résidus par source, pour l'analyse des résidus
     public:
         int n_data; // Number of normalized data in buffer
         std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets
@@ -49,8 +51,9 @@ class HawkesModel {
         std::vector<double> phi; // Variable pour l'ARCHITECTURE FPGA
         std::vector<double> compensator; // Variable pour stocker le compensateur de Hawkes pour l'analyse résiduelle
 
-        double ewma_alpha = 0.2; // Paramètre pour l'Exponential Weighted Moving Average (EWMA) pour le calcul des intensités
-        double ewma_residuals = 0.0; // Variable pour stocker la moyenne mobile exponentielle des résidus, utilisée pour l'analyse de la qualité du modèle
+        double ewma_alpha = 0.2; // Paramètre de lissage de l'Exponential Weighted Moving Average (EWMA) des résidus
+        std::vector<double> ewma_residuals; // Moyenne mobile exponentielle des résidus, une valeur par source, pour l'analyse temps réel de la qualité du modèle
+        std::vector<bool> ewma_initialized; // Indique, par source, si l'EWMA a déjà été amorcée sur un premier résidu (évite le biais initial vers 0)
         
         std::vector<Event> buffer; // Buffer qui enregistre les events, i.e. les timestamps de chaque nouvelle données du symbol gérès par ce model.
 

@@ -470,6 +470,64 @@ void ControlPanel::render() {
     render_main_bar();
     render_command_bar();
     render_control_panel();
+    render_residuals_ewma();
+}
+
+// EWMA des résidus — métrique de qualité du modèle en temps réel.
+// Le compensateur intégré entre deux événements consécutifs d'une même source suit,
+// pour un modèle bien calibré, une loi Exp(1) (moyenne 1). L'EWMA de ces résidus doit
+// donc osciller autour de 1 : une dérive durable au-dessus signale un modèle qui
+// sous-estime l'intensité, en dessous un modèle qui la surestime.
+void ControlPanel::render_residuals_ewma() {
+    ImGui::Begin("EWMA Résidus");
+
+    auto snap = telemetry_manager.get_residuals_snapshot(this->current_symbol_index);
+    int n_sources = (int)snap.ewma_by_source.size();
+
+    int max_len = 0;
+    for (const auto& v : snap.ewma_by_source) max_len = std::max(max_len, (int)v.size());
+
+    if (max_len == 0) {
+        ImGui::TextDisabled("En attente de résidus calibrés...");
+        ImGui::End();
+        return;
+    }
+
+    // Lecture rapide de la valeur courante de la métrique pour chaque source
+    for (int src = 0; src < n_sources; src++) {
+        const auto& ewma = snap.ewma_by_source[src];
+        if (ewma.empty()) continue;
+        const char* ws_name = (src + 1 < (int)DefaultParameters::websockets.size())
+                                  ? DefaultParameters::websockets[src + 1].c_str() : "?";
+        if (src > 0) ImGui::SameLine();
+        ImGui::TextColored(ImPlot::GetColormapColor(src), "%s: %.3f", ws_name, ewma.back());
+    }
+    ImGui::Separator();
+
+    if (ImPlot::BeginPlot("##EWMAResiduals", ImVec2(-1, -1))) {
+        ImPlot::SetupAxes("Événements calibrés", "EWMA des résidus",
+                          ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+
+        // Cible théorique : moyenne des résidus Exp(1) = 1 (modèle parfaitement calibré)
+        double ref_xs[2] = {0.0, (double)(max_len - 1)};
+        double ref_ys[2] = {1.0, 1.0};
+        ImPlot::SetNextLineStyle(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), 1.5f);
+        ImPlot::PlotLine("Cible = 1", ref_xs, ref_ys, 2);
+
+        // Une courbe par source, couleur cohérente avec le QQ plot et les intensités
+        for (int src = 0; src < n_sources; src++) {
+            const auto& ewma = snap.ewma_by_source[src];
+            if (ewma.empty()) continue;
+            const char* ws_name = (src + 1 < (int)DefaultParameters::websockets.size())
+                                      ? DefaultParameters::websockets[src + 1].c_str() : "?";
+            ImPlot::SetNextLineStyle(ImPlot::GetColormapColor(src), 1.6f);
+            ImPlot::PlotLine(ws_name, ewma.data(), (int)ewma.size());
+        }
+
+        ImPlot::EndPlot();
+    }
+
+    ImGui::End();
 }
 
 
