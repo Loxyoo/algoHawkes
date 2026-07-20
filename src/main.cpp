@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
 
     srand(time(NULL));
 
-    int dimensions   = (argc > 1) ? atoi(argv[1]) : 3;    // Nombre de dimensions du processus de Hawkes multivarié
+    int dimensions   = (argc > 1) ? atoi(argv[1]) : 2;    // Nombre de dimensions du processus de Hawkes multivarié
     double T         = (argc > 2) ? atof(argv[2]) : 1000.0; // Temps d'arrêt du processus de Hawkes multivarié simulé
     int n_symbols    = (argc > 3) ? atoi(argv[3]) : 2;    // Nombre de symboles simulé
     double time_scale= (argc > 4) ? atof(argv[4]) : 1.0;  // Facteur d'accélération sim/wall-clock (1.0 = temps réel, 100 = ×100, <=0 = full speed)
@@ -155,16 +155,22 @@ int main(int argc, char** argv) {
     // Pour le stress test, on va réaliser au départ un mapping aléatoire uniforme entre les workes. On comptera sur le scheduler dynamique pour qu'il recalibre en fonction des ressources utilisés.
     ;;;
 
-    // Les données générées par la simultation seront directement envoyées dans la shared_queue pour être traitées par le scheduler et les workers
+    // Les données générées par la simulation seront directement envoyées dans la shared_queue
+    // pour être traitées par le scheduler et les workers.
     std::vector<std::thread> ogata_sim_threads;
     ogata_sim_threads.reserve(n_symbols);
 
-    // On enregistre les paramètres de simulations
-    std::vector<SimOgataParams> all_OgataParams;
-    all_OgataParams.reserve(n_symbols);
+    // On dimensionne le vecteur une seule fois (adresses des éléments stables ensuite) puis on
+    // initialise chaque jeu de paramètres SÉQUENTIELLEMENT dans le thread principal, AVANT de
+    // lancer les threads de simulation, afin d'éviter les potentiels data races (plusieurs threads accèdent
+    // simultanément à la même case mémoire).
+    DefaultParameters::all_OgataParams.resize(n_symbols);
+    for (int i = 0; i < n_symbols; i++) {
+        sim_init_params(&DefaultParameters::all_OgataParams[i], dimensions, T);
+    }
 
     for (int i = 0; i < n_symbols; i++) {
-        ogata_sim_threads.emplace_back([&shared_queue, &symbols, dimensions, T, time_scale, i, &all_OgataParams]() {
+        ogata_sim_threads.emplace_back([&shared_queue, &symbols, T, time_scale, i]() {
             std::cout << "Launching simulation for " << symbols[i]
                       << " (time_scale=" << time_scale << "x)..." << std::endl;
 
@@ -173,12 +179,9 @@ int main(int argc, char** argv) {
             history.symbol = symbols[i];
             history.T_max = T;
 
-            SimOgataParams params;
-            sim_init_params(&params, dimensions, T);
-            all_OgataParams.emplace_back(params);
-            real_time_multivariate_ogata_sim(shared_queue, &params, &history, time_scale);
-
-            sim_free_params(&params);
+            // Pointeur direct vers l'élément stocké (aucune copie). Le vecteur n'est plus jamais
+            // redimensionné, donc l'adresse reste valide pendant toute la simulation.
+            real_time_multivariate_ogata_sim(shared_queue, &DefaultParameters::all_OgataParams[i], &history, time_scale);
         });
     }
 
@@ -211,7 +214,6 @@ int main(int argc, char** argv) {
     DefaultParameters::websockets.insert(DefaultParameters::websockets.end(), member_names.begin(), member_names.end());
 
     DefaultParameters::default_symbol = symbols[0];
-    DefaultParameters::all_OgataParams = all_OgataParams;
     // Démarrage du scheduler dans un thread séparé pour permettre à l'interface utilisateur de fonctionner en parallèle
     std::thread scheduler_thread([&scheduler](){
         scheduler.run();
@@ -223,6 +225,13 @@ int main(int argc, char** argv) {
 
     for (auto& t : ogata_sim_threads) {
         if (t.joinable()) t.join();
+    }
+
+    // Libération des paramètres de simulation (propriétaire unique). Fait APRÈS le join des
+    // threads de simulation (plus aucun op->... lu) et APRÈS main_renderer() (plus aucun rendu
+    // de branching_matrix) : plus aucun lecteur, donc aucune référence pendante possible.
+    for (auto& p : DefaultParameters::all_OgataParams) {
+        sim_free_params(&p);
     }
 
     return EXIT_SUCCESS;

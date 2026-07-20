@@ -100,4 +100,15 @@ typedef struct {
     int current_index; // Index du prochain résidu à écrire dans le buffer circulaire
 } residual_circular_buffer;
 
+// Structure pour le calcul de la statistique de Chi2
+// Utilisé dans les modéles de Hawkes permettant d'assister l'auto-calibration et dans le telemetry manager
+// pour afficher la stat sur l'UI.
+struct chi2_metrics {
+    int K = 0; // nombre de bins (cellules) dans le support de la distribution
+    double chi2_statistic = 0.0; // valeur de la statistique de test.
+    double chi2_critical_value;
+    std::vector<double> bins; // bornes supérieures des bins (la dernière = +inf)
+    std::vector<double> counter_in_bins; // effectif observé O_k dans chaque bin
+};
+
 #endif // STRUCT_H

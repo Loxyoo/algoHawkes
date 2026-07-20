@@ -16,6 +16,7 @@ find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(ixwebsocket CONFIG REQUIRED) 
 find_package(JsonCpp REQUIRED) 
+find_package(Boost REQUIRED)
 
 # --- 1. Config ImGui ---
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/imgui)
@@ -61,7 +62,7 @@ target_include_directories(MonApp PRIVATE
     ${IMPLOT_DIR} 
 )
 
-target_link_libraries(MonApp PRIVATE ImPlotLib ImGuiLib glfw OpenGL::GL ixwebsocket::ixwebsocket JsonCpp::JsonCpp)
+target_link_libraries(MonApp PRIVATE ImPlotLib ImGuiLib glfw OpenGL::GL ixwebsocket::ixwebsocket JsonCpp::JsonCpp Boost::boost)
 
 # Chemin absolu vers les assets (fonts, etc.) — utilisé par le code pour éviter
 # la dépendance au CWD au lancement.

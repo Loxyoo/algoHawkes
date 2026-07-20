@@ -1,6 +1,6 @@
 #include "hawkesWorker.h"
 #include <iostream>
-
+#include <boost/math/distributions/chi_squared.hpp>
 #include <cmath>
 #include <chrono>
 #include <cstdint>
@@ -286,6 +286,7 @@ void Worker::run() {
         double current_unix = now_unix();
         for (int i = 0; i < this->n_assets; i++) {
             this->models[i].compute_virtual_intensities(current_unix);
+            this->models[i].push_event_rates(); // Décroissance + publication des taux d'événements
         }
 
         now = std::chrono::steady_clock::now();
@@ -354,7 +355,39 @@ HawkesModel::HawkesModel(
     this->ewma_residuals.assign(this->n_websockets, 0.0);
     this->ewma_initialized.assign(this->n_websockets, false);
 
+    // Compteur d'événements par seconde : fenêtres vides, amorcées sur l'heure courante
+    // (la première clôture de fenêtre resynchronise sur l'horloge des données, cf. push_event_rates).
+    this->event_window_count.assign(this->n_websockets, 0);
+    this->event_window_start.assign(this->n_websockets, now_unix());
+    this->event_rates.assign(this->n_websockets, 0.0);
+
     this->branching_matrix.assign(x, 0.0); // Initialisation de la matrice de branchement à zéro
+
+    this->residual_buffers.reserve(this->n_websockets);
+
+    this->W.assign(this->n_websockets, DEFAULT_CIRCULAR_BUFFER_SIZE);
+
+    for (int i = 0; i < this->n_websockets; ++i)
+    this->residual_buffers.emplace_back(DEFAULT_CIRCULAR_BUFFER_SIZE);
+
+    // Initialisation des bins et des compteurs du test du Chi2 en ligne.
+    this->chi2_metrics_by_src.resize(this->n_websockets);
+    // Règle empirique du nombre de bins : K ≈ W^(2/5) (règle de Mann-Wald 1942)
+    int K = std::max(2, (int)std::pow((double)DEFAULT_CIRCULAR_BUFFER_SIZE, 2.0 / 5.0));
+    
+    boost::math::chi_squared dist(K-1);
+    double chi2_critical_value = boost::math::quantile(dist, 1.0 - RISK); // Valeur seuil pour l'acceptation de H0 pour le Chi^2 à K-1 degrès de liberté et un risque RISK
+    for (int src = 0; src < this->n_websockets; src++) {
+        this->chi2_metrics_by_src[src].K = K;
+        this->chi2_metrics_by_src[src].chi2_critical_value = chi2_critical_value;
+        this->chi2_metrics_by_src[src].chi2_statistic = -(double)this->W[src];
+        this->chi2_metrics_by_src[src].counter_in_bins.assign(K, 0.0);
+        // Bins ÉQUIPROBABLES sous Exp(1) : la borne supérieure du bin k est le quantile d'ordre k/K
+        for (int k = 1; k <= K; k++) {
+            double order = (double)k / K;
+            this->chi2_metrics_by_src[src].bins.push_back(exponential_quantile(order, 1.0));
+        }
+    }
 }
 
 // METHODS
@@ -451,11 +484,40 @@ void HawkesModel::update_model(normalized_data data) {
     this->buffer.push_back(event);
     this->n_data++;
 
+    // Comptabilise l'événement pour le compteur events/s de sa source.
+    this->register_event_for_rate(source_idx);
+
     if (this->n_data > 50000) {
         int prune_count = 10000;
         this->buffer.erase(this->buffer.begin(), this->buffer.begin()+prune_count);
         this->n_data -= prune_count;
     }
+}
+
+void HawkesModel::register_event_for_rate(int source_idx) {
+    if (source_idx < 0 || source_idx >= this->n_websockets) return;
+    this->event_window_count[source_idx]++;
+}
+
+void HawkesModel::push_event_rates() {
+    // Temps de référence = dernier timestamp de données traité (même horloge que les events comptés).
+    double now = this->last_global_time;
+    for (int s = 0; s < this->n_websockets; s++) {
+        double elapsed = now - this->event_window_start[s];
+        if (elapsed >= this->event_rate_window_sec) {
+            // Fenêtre écoulée : le taux est le nombre d'événements comptés divisé par sa durée
+            // réelle. Une source silencieuse clôt avec un compteur nul, son taux retombe donc à 0.
+            this->event_rates[s]        = this->event_window_count[s] / elapsed;
+            this->event_window_count[s] = 0;
+            this->event_window_start[s] = now;
+        } else if (elapsed < 0.0) {
+            // Écart d'horloge à l'amorçage (référence wall-clock encore en avance sur l'horloge
+            // des données, ex. temps de simulation démarrant près de 0) : on resynchronise.
+            this->event_window_start[s] = now;
+            this->event_window_count[s] = 0;
+        }
+    }
+    this->telemetry_manager.update_event_rates(this->symbol_id, this->event_rates);
 }
 
 void HawkesModel::residuals_analysis(normalized_data data) {
@@ -504,8 +566,57 @@ void HawkesModel::residuals_analysis(normalized_data data) {
         } else {
             ewma = (1.0 - this->ewma_alpha) * ewma + this->ewma_alpha * diff_compensator;
         }
-        this->telemetry_manager.update_residuals_analysis(this->symbol_id, source_idx, diff_compensator, ewma);
+        this->telemetry_manager.update_residualsBuffer_analysis(DEFAULT_CIRCULAR_BUFFER_SIZE, this->symbol_id, source_idx, diff_compensator, ewma);
+
+        // Test du Chi2 en ligne sur la fenêtre glissante des W derniers résidus.
+        // update_Chi2_statistic gère lui-même l'insertion dans residual_buffers, pour que
+        // le buffer et les compteurs de bins restent toujours synchronisés (une seule
+        // source de vérité : chaque résidu ajouté au buffer est compté, chaque résidu
+        // évincé est décompté).
+        update_Chi2_statistic(diff_compensator, source_idx);
     }
+}
+
+void HawkesModel::update_autocorrelation_test(double residual) {
+
+}
+
+void HawkesModel::update_Chi2_statistic(double residual, int source_idx) {
+    chi2_metrics& m             = this->chi2_metrics_by_src[source_idx];
+    CircularBuffer<double>& buf = this->residual_buffers[source_idx];
+    const int K = m.K;
+    const double K_over_W = (double)K / (double)this->W[source_idx];
+
+    // Localise le bin (cellule) auquel appartient un résidu. Les bornes m.bins sont les
+    // bornes SUPÉRIEURES croissantes ; le dernier bin a pour borne +inf (fourre-tout),
+    // donc la recherche trouve toujours un bin. Le fallback K-1 protège d'un éventuel NaN.
+    auto find_bin = [&](double r) -> int {
+        for (int i = 0; i < K; i++)
+            if (r <= m.bins[i]) return i;
+        return K - 1;
+    };
+
+    // éviction du plus ancien résidu.
+    // Si le buffer est plein, le put() ci-dessous va ÉCRASER le plus ancien résidu.
+    // On le retire donc d'abord de son bin, sinon le Chi2 s'accumulerait sur tous les
+    if (buf.is_full()) {
+        int old_bin = find_bin(buf.peek_oldest());
+        double c = m.counter_in_bins[old_bin];
+        m.chi2_statistic += (1.0 - 2.0 * c) * K_over_W;
+        m.counter_in_bins[old_bin] = c - 1.0;
+    }
+
+    // Insertion du nouveau résidu dans la fenêtre (écrase le plus ancien si plein).
+    buf.put(residual);
+
+    // mise à jour incrémentale avec le nouveau résidu.
+    int new_bin = find_bin(residual);
+    double c = m.counter_in_bins[new_bin];
+    m.chi2_statistic += (2.0 * c + 1.0) * K_over_W;
+    m.counter_in_bins[new_bin] = c + 1.0;
+
+    // std::cout << "chi2 stat : " << m.chi2_statistic << std::endl;
+    this->telemetry_manager.update_chi2metrics(symbol_id, source_idx, this->chi2_metrics_by_src[source_idx], this->W);
 }
 
 void HawkesModel::update_hawkes_params(const opt_hawkesParams& new_params) {

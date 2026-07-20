@@ -23,22 +23,29 @@ void save_optimized_params(const std::string& filename, const opt_hawkesParams& 
 // dans ce cas params n'est pas exploitable et ne doit pas être injecté.
 bool load_optimized_params(const std::string& filename, opt_hawkesParams& params);
 
+constexpr double RISK = 0.05;
 
 class HawkesModel {
     protected:
         int worker_id; // Identifiant du worker
         // Si n_websockets = 5, un modèle de Hawkes se basera sur 5 processus auto-excitante
         int n_websockets; // Nombre de websockets actif
-        std::string asset; // Nom de l'asset géré par ce model
-        ThreadSafeQueue<normalized_data>& inqueue; // Queue Thread Safe qui permet de recevoir les données des marchés normalisé
         int training_duration; // Durée de l'entrainement
-        Json::Value websocket_map; // Map qui associe le nom d'un exchange à un integer (id)
-        TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
         bool parameters_optimized = false;
         int symbol_id; // Identifiant du symbol géré par ce modèle, associé à un index dans la queue de télémétrie
         double last_global_time; // Variable pour stocker le temps global maximum (remplace la logique du std::max_element)
+        std::string asset; // Nom de l'asset géré par ce model
+        ThreadSafeQueue<normalized_data>& inqueue; // Queue Thread Safe qui permet de recevoir les données des marchés normalisé
+        Json::Value websocket_map; // Map qui associe le nom d'un exchange à un integer (id)
+        TelemetryManager& telemetry_manager; // Telemetry manager pour monitorer les performances et la santé du système
         std::vector<double> branching_matrix; // Matrice de branchement pour modéliser les interactions entre websockets
-        std::vector<residual_circular_buffer> residual_buffers; // Buffers circulaires pour stocker les résidus par source, pour l'analyse des résidus
+        
+        std::vector<int> W; // nombre maximal d'élément que peut contenir un buffer de rédidus. 
+        std::vector<CircularBuffer<double>> residual_buffers; // Vecteurs Buffers circulaires pour stocker les résidus par source, pour l'analyse des résidus
+        
+        // Attributs pour le test du CHI2 ONLINE    
+        std::vector<chi2_metrics> chi2_metrics_by_src;
+
     public:
         int n_data; // Number of normalized data in buffer
         std::vector<double> intensities; // Vecteur stockant les intensités de Hawkes de chaque websockets
@@ -54,9 +61,16 @@ class HawkesModel {
         double ewma_alpha = 0.2; // Paramètre de lissage de l'Exponential Weighted Moving Average (EWMA) des résidus
         std::vector<double> ewma_residuals; // Moyenne mobile exponentielle des résidus, une valeur par source, pour l'analyse temps réel de la qualité du modèle
         std::vector<bool> ewma_initialized; // Indique, par source, si l'EWMA a déjà été amorcée sur un premier résidu (évite le biais initial vers 0)
-        
-        std::vector<Event> buffer; // Buffer qui enregistre les events, i.e. les timestamps de chaque nouvelle données du symbol gérès par ce model.
 
+        // Compteur d'événements reçus par seconde, par source. Simple comptage sur une
+        // fenêtre glissante d'une seconde (horloge des données) : on accumule les events,
+        // et dès qu'une seconde s'est écoulée on publie count / durée puis on remet à zéro.
+        double event_rate_window_sec = 1.0; // Durée de la fenêtre de comptage (secondes)
+        std::vector<int> event_window_count;   // Événements accumulés dans la fenêtre courante, par source
+        std::vector<double> event_window_start; // Début (timestamp données) de la fenêtre courante, par source
+        std::vector<double> event_rates;        // Dernier taux publié (events/s), par source
+
+        std::vector<Event> buffer; // Buffer qui enregistre les events, i.e. les timestamps de chaque nouvelle données du symbol gérès par ce model.
         /**
          * @param worker_id identifiant du worker
          * @param n_websockets Nombre de webscokets actif
@@ -64,6 +78,8 @@ class HawkesModel {
          * @param inqueue Thread Safe Queue qui permet de récupérer les données normalisées
          * @param training_duration Durée de l'entrainement
          * @param websocket_map Dictionnaire associé à chaque nom de websockets, un identifiant (entier dans [0:n_websocket-1])
+         * @param telemetry_manager Manager Télémètrique qui permet de faire le pont entre le front end et le back end du logiciel
+         * @param symbol_id Identifiant du symbole
          */
         HawkesModel(
             int worker_id,
@@ -99,7 +115,42 @@ class HawkesModel {
          */
         void residuals_analysis(normalized_data data);
 
+        /**
+         * @brief 
+         * 
+         */
         void update_hawkes_params(const opt_hawkesParams& new_params);
+
+        /**
+         * @brief
+         * 
+         */
+        void update_autocorrelation_test(double residual);
+
+        /**
+         * @brief
+         *
+         */
+        void update_Chi2_statistic(double residual, int source_idx);
+
+        /**
+         * @brief Comptabilise l'arrivée d'un événement pour le compteur events/s de la source.
+         *
+         * Incrémente simplement le compteur de la fenêtre courante. Le calcul du taux et la
+         * remise à zéro sont faits dans push_event_rates une fois la fenêtre écoulée.
+         *
+         * @param source_idx Index de la source (exchange) concernée
+         */
+        void register_event_for_rate(int source_idx);
+
+        /**
+         * @brief Clôt les fenêtres d'une seconde écoulées, publie count / durée vers le TelemetryManager.
+         *
+         * Appelé à chaque frame par le worker. Le temps de référence est last_global_time (dernier
+         * timestamp de données traité), même horloge que les événements comptés. Une source devenue
+         * silencieuse voit sa fenêtre se clôturer avec un compteur nul, donc un taux qui retombe à 0.
+         */
+        void push_event_rates();
 };
 
 // Classe qui permet de gérer les métriques d'un asset. Comme les variations de prix, les volumes, les intensités de Hawkes, etc. Elle est utilisée pour monitorer la santé du marché et détecter des anomalies.

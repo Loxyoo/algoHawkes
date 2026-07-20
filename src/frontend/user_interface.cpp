@@ -465,12 +465,139 @@ void ControlPanel::render_control_panel() {
     ImGui::End();
 }
 
+// Tableau de métriques — une ligne par source (exchange), avec la qualité du modèle
+// en temps réel lue depuis le TelemetryManager. Pour l'instant seule l'EWMA des
+// résidus est réellement alimentée ; les autres colonnes (Chi^2, W, K, res/s., prix,
+// variation) sont des emplacements réservés en attendant que la télémétrie les expose.
+void ControlPanel::render_metrics_table() {
+    ImGui::Begin("Metrics Panel");
+
+    std::vector<std::string> members = config.websocket_map.getMemberNames();
+    int n = (int)members.size();
+
+    ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
+                            ImGuiTableFlags_SizingFixedFit |
+                            ImGuiTableFlags_BordersH |
+                            ImGuiTableFlags_SizingStretchSame;
+
+    int number_metrics_column = 9;
+    #ifdef STRESS_TEST
+        number_metrics_column = 7;
+    #endif
+
+    // Snapshot des buffers de résidus lu UNE seule fois par frame (copie sous verrou
+    // partagé). Chaque source possède son propre buffer d'EWMA ; l'index de source
+    // suit l'ordre des membres de websocket_map, donc `row` indexe directement le buffer.
+    auto residual_snap = telemetry_manager.get_residualsBuffers_snapshot(this->current_symbol_index);
+    const auto& ewma_buffers = residual_snap.ewmaBuffers_by_sources;
+
+    auto chi2_snap = telemetry_manager.get_chi2metrics_snapshot(this->current_symbol_index);
+
+    // Taux d'événements reçus (events/s) par source, publié en continu par le worker.
+    auto event_rates = telemetry_manager.get_event_rates_snapshot(this->current_symbol_index);
+
+    // Bande de tolérance : l'EWMA des résidus d'un modèle bien calibré (~Exp(1)) oscille
+    // autour de 1. On tolère ±20 % avant de signaler une dérive (cohérent avec render_residuals_ewma).
+    const double band_lo = 0.5, band_hi = 1.5;
+    const ImVec4 col_ok    = ImVec4(0.30f, 0.80f, 0.31f, 1.0f); // dans la bande
+    const ImVec4 col_drift = ImVec4(0.89f, 0.29f, 0.29f, 1.0f); // hors bande
+
+    if (ImGui::BeginTable("table", number_metrics_column, flags)) {
+
+        ImGui::TableSetupColumn("Membres");
+        ImGui::TableSetupColumn("EWMA");
+        ImGui::TableSetupColumn("Chi^2");
+        ImGui::TableSetupColumn("Critical"); // seuil critique/limite pour l'acceptation de H0
+        ImGui::TableSetupColumn("W");
+        ImGui::TableSetupColumn("K");
+        // ImGui::TableSetupColumn("Score");
+        ImGui::TableSetupColumn("event/s.");
+        #ifndef STRESS_TEST
+            ImGui::TableSetupColumn("Price");
+            ImGui::TableSetupColumn("Var.(%)");
+        #endif
+        // ImGui::TableSetupColumn("Exch.Status");
+
+        ImGui::TableHeadersRow();
+
+        for (int row = 0; row < n; ++row) {
+            ImGui::TableNextRow(); // On crée une nouvelle ligne
+
+            // --- Membre (source) ---
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", members[row].c_str());
+
+            // --- EWMA : valeur courante des résidus de la source ---
+            // On lit la dernière valeur via get_ordered_items().back() : get() consommerait
+            // le plus ancien élément (mauvaise valeur) au lieu de renvoyer la plus récente.
+            ImGui::TableNextColumn();
+            if (row < (int)ewma_buffers.size() && !ewma_buffers[row].empty()) {
+                double ewma = ewma_buffers[row].get_ordered_items().back();
+                bool in_band = (ewma >= band_lo && ewma <= band_hi);
+                ImGui::TextColored(in_band ? col_ok : col_drift, "%.3f", ewma);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            ImGui::TableNextColumn();
+            if (row < (int)chi2_snap.chi2metrics_by_sources.size()) {
+                double chi2 = chi2_snap.chi2metrics_by_sources[row].chi2_statistic;
+                bool is_accepted = chi2 >= 0.0 && chi2 <= chi2_snap.chi2metrics_by_sources[row].chi2_critical_value;
+                ImGui::TextColored(is_accepted ? col_ok : col_drift, "%.3f", chi2);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            ImGui::TableNextColumn();
+            if (row < (int)chi2_snap.chi2metrics_by_sources.size()) {
+                double critical_value = chi2_snap.chi2metrics_by_sources[row].chi2_critical_value;
+                ImGui::Text("%.3f", critical_value);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            ImGui::TableNextColumn();
+            if (row < (int)chi2_snap.chi2metrics_by_sources.size()) {
+                int W = chi2_snap.W[row];
+                ImGui::Text("%d", W);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            ImGui::TableNextColumn();
+            if (row < (int)chi2_snap.chi2metrics_by_sources.size()) {
+                double K = chi2_snap.chi2metrics_by_sources[row].K;
+                ImGui::Text("%.0f", K);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            // --- event/s. : taux d'événements reçus pour cette source ---
+            ImGui::TableNextColumn();
+            if (row < (int)event_rates.size()) {
+                ImGui::Text("%.1f", event_rates[row]);
+            } else {
+                ImGui::TextDisabled("--");
+            }
+
+            // --- Colonnes non encore alimentées par la télémétrie ---
+            for (int col = 0; col < number_metrics_column - 7; col++) {
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("--");
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 // Point d'entrée polymorphe du panneau de contrôle (appelé par UI_renderer).
 void ControlPanel::render() {
     render_main_bar();
     render_command_bar();
     render_control_panel();
-    render_residuals_ewma();
+    // render_residuals_ewma();
+    render_metrics_table();
 }
 
 // EWMA des résidus — métrique de qualité du modèle en temps réel.
@@ -481,11 +608,11 @@ void ControlPanel::render() {
 void ControlPanel::render_residuals_ewma() {
     ImGui::Begin("EWMA Résidus");
 
-    auto snap = telemetry_manager.get_residuals_snapshot(this->current_symbol_index);
-    int n_sources = (int)snap.ewma_by_source.size();
+    auto snap = telemetry_manager.get_residualsBuffers_snapshot(this->current_symbol_index);
+    int n_sources = (int)snap.ewmaBuffers_by_sources.size();
 
     int max_len = 0;
-    for (const auto& v : snap.ewma_by_source) max_len = std::max(max_len, (int)v.size());
+    for (const auto& v : snap.ewmaBuffers_by_sources) max_len = std::max(max_len, (int)v.size());
 
     if (max_len == 0) {
         ImGui::TextDisabled("En attente de résidus calibrés...");
@@ -495,7 +622,7 @@ void ControlPanel::render_residuals_ewma() {
 
     // Lecture rapide de la valeur courante de la métrique pour chaque source
     for (int src = 0; src < n_sources; src++) {
-        const auto& ewma = snap.ewma_by_source[src];
+        const auto ewma = snap.ewmaBuffers_by_sources[src].get_ordered_items();
         if (ewma.empty()) continue;
         const char* ws_name = (src + 1 < (int)DefaultParameters::websockets.size())
                                   ? DefaultParameters::websockets[src + 1].c_str() : "?";
@@ -505,18 +632,31 @@ void ControlPanel::render_residuals_ewma() {
     ImGui::Separator();
 
     if (ImPlot::BeginPlot("##EWMAResiduals", ImVec2(-1, -1))) {
-        ImPlot::SetupAxes("Événements calibrés", "EWMA des résidus",
+        ImPlot::SetupAxes("Résidus récents (fenêtre glissante)", "EWMA des résidus",
                           ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 
+        const double x_max = (double)(max_len - 1);
+
+        // Bande de tolérance : zone où l'EWMA reste statistiquement acceptable autour de 1.
+        // Les résidus d'un modèle bien calibré suivent Exp(1) (moyenne 1) ; on tolère ±20 %
+        // avant de considérer une dérive. La bande sert de repère visuel immédiat.
+        const double band_lo = 0.8, band_hi = 1.2;
+        double band_xs[2]    = {0.0, x_max};
+        double band_lo_ys[2] = {band_lo, band_lo};
+        double band_hi_ys[2] = {band_hi, band_hi};
+        ImPlot::SetNextFillStyle(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), 0.10f);
+        ImPlot::PlotShaded("Zone acceptable", band_xs, band_lo_ys, band_hi_ys, 2);
+
         // Cible théorique : moyenne des résidus Exp(1) = 1 (modèle parfaitement calibré)
-        double ref_xs[2] = {0.0, (double)(max_len - 1)};
         double ref_ys[2] = {1.0, 1.0};
         ImPlot::SetNextLineStyle(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), 1.5f);
-        ImPlot::PlotLine("Cible = 1", ref_xs, ref_ys, 2);
+        ImPlot::PlotLine("Cible = 1", band_xs, ref_ys, 2);
 
-        // Une courbe par source, couleur cohérente avec le QQ plot et les intensités
+        // Une courbe par source, tracée dans l'ordre chronologique : fenêtre glissante
+        // continue, sans reset ni discontinuité au point d'enroulement du ring.
+        // Couleur cohérente avec le QQ plot et les intensités.
         for (int src = 0; src < n_sources; src++) {
-            const auto& ewma = snap.ewma_by_source[src];
+            const auto ewma = snap.ewmaBuffers_by_sources[src].get_ordered_items();
             if (ewma.empty()) continue;
             const char* ws_name = (src + 1 < (int)DefaultParameters::websockets.size())
                                       ? DefaultParameters::websockets[src + 1].c_str() : "?";
@@ -716,12 +856,12 @@ void AnalyticsPanel::render_intensities_plot() {
 void AnalyticsPanel::render_qq_plot() {
     ImGui::Begin("QQ Plot — Résidus Hawkes");
 
-    auto snap = telemetry_manager.get_residuals_snapshot(this->current_symbol_index);
-    int n_sources = (int)snap.residuals_by_source.size();
+    auto snap = telemetry_manager.get_residualsBuffers_snapshot(this->current_symbol_index);
+    int n_sources = (int)snap.residualBuffers_by_source.size();
 
     // Compte total de résidus pour l'affichage
     int total_residuals = 0;
-    for (auto& v : snap.residuals_by_source) total_residuals += (int)v.size();
+    for (auto& v : snap.residualBuffers_by_source) total_residuals += (int)v.size();
     ImGui::SameLine();
     ImGui::TextDisabled("(%d résidus)", total_residuals);
 
@@ -738,7 +878,7 @@ void AnalyticsPanel::render_qq_plot() {
     float axis_max = 0.0f;
 
     for (int src = 0; src < n_sources; src++) {
-        const auto& raw = snap.residuals_by_source[src];
+        const auto& raw = snap.residualBuffers_by_source[src].get_all_items();
         if (raw.size() < 2) continue;
 
         std::vector<double> sample;

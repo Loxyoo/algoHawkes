@@ -56,9 +56,13 @@ void sim_init_params(SimOgataParams* p, int dim, double T) {
 }
 
 void sim_free_params(SimOgataParams* p) {
-    delete[] p->mu;
-    delete[] p->alpha;
-    delete[] p->beta;
+    // delete[] sur nullptr est un no-op ; remettre à nullptr rend l'appel idempotent
+    // (pas de double-free si sim_free_params est appelé deux fois sur le même objet).
+    delete[] p->mu;               p->mu = nullptr;
+    delete[] p->alpha;            p->alpha = nullptr;
+    delete[] p->beta;             p->beta = nullptr;
+    // branching_matrix était alloué dans sim_init_params mais jamais libéré (fuite).
+    delete[] p->branching_matrix; p->branching_matrix = nullptr;
 }
 
 void real_time_multivariate_ogata_sim(ThreadSafeQueue<normalized_data>& shared_queue,
